@@ -1,13 +1,14 @@
 # Perch Hoplite
 
-![CI](https://github.com/google-research/hoplite/actions/workflows/ci_pip.yml/badge.svg)
+![CI](https://github.com/google-research/perch-hoplite/actions/workflows/ci_pip.yml/badge.svg)
 
 Hoplite is a system for storing large volumes of embeddings from machine
 perception models. We focus on combining vector search with active learning
 workflows, aka [agile modeling](https://arxiv.org/abs/2302.12948).
 
 While we get this documentation ready, we recommend checking out the main
-[Perch repository](https://github.com/google-research/perch).
+[Perch repository](https://github.com/google-research/perch), which includes
+embedding model training code.
 
 This repository consists of four sub-libraries:
 
@@ -47,7 +48,7 @@ pip install tensorflow-hub
 
 Then to install with pip:
 ```bash
-pip install git+https://github.com/google-research/hoplite.git
+pip install git+https://github.com/google-research/perch-hoplite.git
 ```
 
 Then run the tests and check that they pass:

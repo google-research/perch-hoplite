@@ -30,14 +30,14 @@ jobs:
           pip install requests
           pip install tensorflow-cpu
           pip install tensorflow-hub
-          pip install git+https://github.com/google-research/hoplite.git
+          pip install git+https://github.com/google-research/perch-hoplite.git
       - name: Test db with unittest
-        run: python -m unittest discover -s hoplite/db/tests -p "*test.py"
+        run: python -m unittest discover -s perch_hoplite/db/tests -p "*test.py"
       - name: Test taxonomy with unittest
-        run: python -m unittest discover -s hoplite/taxonomy -p "*test.py"
+        run: python -m unittest discover -s perch_hoplite/taxonomy -p "*test.py"
       - name: Test zoo with unittest
-        run: python -m unittest discover -s hoplite/zoo -p "*test.py"
+        run: python -m unittest discover -s perch_hoplite/zoo -p "*test.py"
       - name: Test zoo tensorflow models with unittest
-        run: python -m unittest discover -s hoplite/zoo/tests_tf -p "*test.py"
+        run: python -m unittest discover -s perch_hoplite/zoo/tests_tf -p "*test.py"
       - name: Test agile with unittest
-        run: python -m unittest discover -s hoplite/agile/tests -p "*test.py"
+        run: python -m unittest discover -s perch_hoplite/agile/tests -p "*test.py"

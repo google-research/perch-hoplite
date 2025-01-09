@@ -7,8 +7,7 @@ perception models. We focus on combining vector search with active learning
 workflows, aka [agile modeling](https://arxiv.org/abs/2302.12948).
 
 While we get this documentation ready, we recommend checking out the main
-[Perch repository](https://github.com/google-research/perch), which includes
-embedding model training code.
+[Perch repository](https://github.com/google-research/perch).
 
 This repository consists of four sub-libraries:
 

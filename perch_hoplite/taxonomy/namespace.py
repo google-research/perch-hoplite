@@ -22,7 +22,6 @@ import io
 from typing import Iterable
 
 import numpy as np
-import tensorflow as tf
 
 UNKNOWN_LABEL = "unknown"
 
@@ -155,9 +154,7 @@ class ClassList:
       writer.writerow([class_])
     return buffer.getvalue()
 
-  def get_class_map_tf_lookup(
-      self, target_class_list: ClassList
-  ) -> tuple[tf.lookup.StaticHashTable, tf.Tensor]:
+  def get_class_map_tf_lookup(self, target_class_list: ClassList):
     """Create a static hash map for class indices.
 
     Create a lookup table for use in TF Datasets, for, eg, converting between
@@ -173,6 +170,8 @@ class ClassList:
       A tensorflow StaticHashTable and an indicator vector for the image of
       the classlist mapping.
     """
+    import tensorflow as tf
+
     if self.namespace != target_class_list.namespace:
       raise ValueError("namespaces must match when creating a class map.")
     intersection = set(self.classes) & set(target_class_list.classes)
@@ -195,7 +194,7 @@ class ClassList:
       mapping: Mapping,
       keep_unknown: bool | None = None,
       target_class_list: ClassList | None = None,
-  ) -> tf.lookup.StaticHashTable:
+  ):
     """Create a tf.lookup.StaticHasTable for namespace mappings.
 
     Args:
@@ -218,6 +217,8 @@ class ClassList:
       ValueError: If a target class list was passed and the namespace of this
       does not match the mapping target namespace.
     """
+    import tensorflow as tf
+
     if UNKNOWN_LABEL in self.classes and keep_unknown is None:
       raise ValueError(
           "'unknown' found in source classes. Explicitly set keep_unknown to"

@@ -10,7 +10,7 @@ on:
 
 jobs:
   test-ubuntu:
-    name: "test on ${{ matrix.python-version }} on ${{ matrix.os }}"
+    name: "poetry_tf test on ${{ matrix.python-version }} on ${{ matrix.os }}"
     runs-on: "${{ matrix.os }}"
     strategy:
       matrix:

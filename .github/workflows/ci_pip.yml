@@ -10,7 +10,7 @@ on:
 
 jobs:
   test-ubuntu:
-    name: "test on ${{ matrix.python-version }} on ${{ matrix.os }}"
+    name: "pip_tf test on ${{ matrix.python-version }} on ${{ matrix.os }}"
     runs-on: "${{ matrix.os }}"
     strategy:
       matrix:
@@ -28,9 +28,7 @@ jobs:
           sudo apt-get install libsndfile1 ffmpeg
           pip install absl-py
           pip install requests
-          pip install tensorflow-cpu
-          pip install tensorflow-hub
-          pip install git+https://github.com/google-research/perch-hoplite.git
+          pip install "perch_hoplite[tf] @ git+https://github.com/google-research/perch-hoplite.git"
       - name: Test db with unittest
         run: python -m unittest discover -s perch_hoplite/db/tests -p "*test.py"
       - name: Test taxonomy with unittest

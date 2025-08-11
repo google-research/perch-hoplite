@@ -126,7 +126,7 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     taxonomy_model_tf = importlib.import_module(
         'perch_hoplite.zoo.taxonomy_model_tf')
     model_config.tfhub_path = taxonomy_model_tf.PERCH_V2_TF_HUB_URL
-    model_config.tfhub_version = 1
+    model_config.tfhub_version = 2
     model_config.model_path = ''
   elif preset_name == ModelConfigName.HUMPBACK:
     model_key = 'google_whale'

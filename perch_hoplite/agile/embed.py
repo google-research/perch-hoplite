@@ -169,10 +169,15 @@ class EmbedWorker:
         self._log_error(source_id, inst, 'audio_runtime_error')
 
   def compute_hop_size_s(
-      self, source_id: source_info.SourceId, target_sample_rate_hz: int
+      self,
+      source_id: source_info.SourceId,
+      target_sample_rate_hz: int,
+      model_hop_size_s: float | None = None,
   ) -> float:
     """Compute the hop size of the embedding model."""
 
+    if model_hop_size_s is not None:
+      return model_hop_size_s
     if hasattr(self.embedding_model, 'hop_size_s'):
       model_hop_size_s = float(self.embedding_model.hop_size_s)
     else:
@@ -188,7 +193,7 @@ class EmbedWorker:
       audio_sample_rate = target_sample_rate_hz
     else:
       raise ValueError('Invalid target_sample_rate.')
-    return model_hop_size_s * audio_sample_rate / model_sample_rate
+    return model_hop_size_s * model_sample_rate / audio_sample_rate
 
   def embedding_exists(self, source_id: source_info.SourceId) -> bool:
     """Check whether embeddings already exist for the given source ID."""

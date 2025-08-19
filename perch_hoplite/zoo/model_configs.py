@@ -71,6 +71,9 @@ def get_model_class(model_key: str) -> type[zoo_interface.EmbeddingModel]:
   if model_key == 'taxonomy_model_tf':
     module = importlib.import_module('perch_hoplite.zoo.taxonomy_model_tf')
     return module.TaxonomyModelTF
+  elif model_key == 'perch_v2':
+    module = importlib.import_module('perch_hoplite.zoo.taxonomy_model_tf')
+    return module.TaxonomyModelTF
   elif model_key == 'google_whale':
     module = importlib.import_module('perch_hoplite.zoo.models_tf')
     return module.GoogleWhaleModel

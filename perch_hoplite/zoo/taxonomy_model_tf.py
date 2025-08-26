@@ -39,6 +39,11 @@ PERCH_V2_TF_HUB_URL = (
     'tensorFlow2/perch_v2'
 )
 
+PERCH_V2_CPU_TF_HUB_URL = (
+    'https://www.kaggle.com/models/google/bird-vocalization-classifier/'
+    'tensorFlow2/perch_v2_cpu'
+)
+
 SURFPERCH_TF_HUB_URL = (
     'https://www.kaggle.com/models/google/surfperch/TensorFlow2'
 )

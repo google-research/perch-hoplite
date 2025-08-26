@@ -30,6 +30,7 @@ class ModelConfigName(enum.Enum):
   BIRDNET_V2_2 = 'birdnet_V2.2'
   BIRDNET_V2_3 = 'birdnet_V2.3'
   PERCH_V2 = 'perch_v2'
+  PERCH_V2_CPU = 'perch_v2_cpu'
   PERCH_8 = 'perch_8'
   SURFPERCH = 'surfperch'
   VGGISH = 'vggish'
@@ -68,10 +69,13 @@ class PresetInfo:
 
 def get_model_class(model_key: str) -> type[zoo_interface.EmbeddingModel]:
   """Import and return the model class."""
-  if model_key == 'taxonomy_model_tf':
-    module = importlib.import_module('perch_hoplite.zoo.taxonomy_model_tf')
-    return module.TaxonomyModelTF
-  elif model_key == 'perch_v2':
+  if model_key in (
+      'taxonomy_model_tf',
+      'perch_8',
+      'perch_v2',
+      'perch_v2_cpu',
+      'surfperch',
+  ):
     module = importlib.import_module('perch_hoplite.zoo.taxonomy_model_tf')
     return module.TaxonomyModelTF
   elif model_key == 'google_whale':
@@ -107,6 +111,20 @@ def load_model_by_name(
   return preset_info.load_model()
 
 
+def perch_config(
+    model_path: str,
+    tfhub_version: int | None = None,
+) -> config_dict.ConfigDict:
+  """Returns a config for a Perch model."""
+  model_config = config_dict.ConfigDict()
+  model_config.model_path = model_path
+  model_config.tfhub_version = tfhub_version
+  model_config.window_size_s = 5.0
+  model_config.hop_size_s = 5.0
+  model_config.sample_rate = 32000
+  return model_config
+
+
 def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
   """Get a config_dict for a known model."""
   model_config = config_dict.ConfigDict()
@@ -130,6 +148,17 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
         'perch_hoplite.zoo.taxonomy_model_tf')
     model_config.tfhub_path = taxonomy_model_tf.PERCH_V2_TF_HUB_URL
     model_config.tfhub_version = 2
+    model_config.model_path = ''
+  elif preset_name == ModelConfigName.PERCH_V2_CPU:
+    model_key = 'taxonomy_model_tf'
+    embedding_dim = 1536
+    model_config.window_size_s = 5.0
+    model_config.hop_size_s = 5.0
+    model_config.sample_rate = 32000
+    taxonomy_model_tf = importlib.import_module(
+        'perch_hoplite.zoo.taxonomy_model_tf')
+    model_config.tfhub_path = taxonomy_model_tf.PERCH_V2_CPU_TF_HUB_URL
+    model_config.tfhub_version = 1
     model_config.model_path = ''
   elif preset_name == ModelConfigName.HUMPBACK:
     model_key = 'google_whale'

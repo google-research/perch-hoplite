@@ -15,8 +15,10 @@
 
 """Functionality for embedding audio examples."""
 
+from concurrent import futures
 import dataclasses
-from typing import Iterator
+import itertools
+import threading
 
 from absl import logging
 import audioread
@@ -45,6 +47,61 @@ class ModelConfig(hoplite_interface.EmbeddingMetadata):
   model_config: config_dict.ConfigDict
 
 
+def worker_initializer(state):
+  name = threading.current_thread().name
+  state[name + 'db'] = state['db'].thread_split()
+
+
+def process_source_id(
+    state,
+    source_id: source_info.SourceId,
+):
+  """Process a single audio source."""
+  worker = state['worker']
+  name = threading.current_thread().name
+  db = state[name + 'db']
+  glob = worker.audio_globs[source_id.dataset_name]
+  target_sample_rate = worker.get_sample_rate_hz(source_id)
+  audio_array = worker.load_audio(source_id)
+
+  if audio_array is None:
+    return
+  if (
+      audio_array.shape[0]
+      < glob.min_audio_len_s * worker.embedding_model.sample_rate
+  ):
+    return
+
+  embs = db.get_embeddings_by_source(
+      dataset_name=source_id.dataset_name,
+      source_id=source_id.file_id,
+      offsets=np.array([source_id.offset_s], np.float16),
+  )
+  if embs.shape[0] > 0:
+    return
+
+  outputs = worker.embedding_model.embed(audio_array)
+  embeddings = outputs.embeddings
+  if embeddings is None:
+    return
+
+  emb_source_ids = []
+  embs = []
+
+  hop_size_s = worker.compute_hop_size_s(source_id, target_sample_rate)
+  for t, embedding in enumerate(embeddings):
+    offset_s = source_id.offset_s + t * hop_size_s
+    emb_source_id = hoplite_interface.EmbeddingSource(
+        dataset_name=source_id.dataset_name,
+        source_id=source_id.file_id,
+        offsets=np.array([offset_s], np.float16),
+    )
+    for channel_embedding in embedding:
+      emb_source_ids.append(emb_source_id)
+      embs.append(channel_embedding)
+  return emb_source_ids, embs
+
+
 class EmbedWorker:
   """Worker for embedding audio examples."""
 
@@ -54,10 +111,12 @@ class EmbedWorker:
       model_config: ModelConfig,
       db: hoplite_interface.HopliteDBInterface,
       embedding_model: zoo_interface.EmbeddingModel | None = None,
+      audio_worker_threads: int = 8,
   ):
     self.db = db
     self.model_config = model_config
     self.audio_sources = audio_sources
+    self.audio_worker_threads = audio_worker_threads
     if embedding_model is None:
       model_class = model_configs.get_model_class(model_config.model_key)
       self.embedding_model = model_class.from_config(model_config.model_config)
@@ -142,10 +201,9 @@ class EmbedWorker:
     else:
       raise ValueError('Invalid target_sample_rate.')
 
-  def load_audio(
-      self, source_id: source_info.SourceId, target_sample_rate_hz: int
-  ) -> np.ndarray | None:
+  def load_audio(self, source_id: source_info.SourceId) -> np.ndarray | None:
     """Load audio from the indicated source and log any problems."""
+    target_sample_rate_hz = self.get_sample_rate_hz(source_id)
     try:
       audio_array = audio_io.load_audio_window(
           filepath=source_id.filepath,
@@ -204,49 +262,30 @@ class EmbedWorker:
     )
     return embs.shape[0] > 0
 
-  def process_source_id(
-      self, source_id: source_info.SourceId
-  ) -> Iterator[tuple[hoplite_interface.EmbeddingSource, np.ndarray]]:
-    """Process a single audio source."""
-    glob = self.audio_globs[source_id.dataset_name]
-    target_sample_rate = self.get_sample_rate_hz(source_id)
-    audio_array = self.load_audio(source_id, target_sample_rate)
-
-    if audio_array is None:
-      return
-    if (
-        audio_array.shape[0]
-        < glob.min_audio_len_s * self.embedding_model.sample_rate
-    ):
-      self._log_error(source_id, 'no_exception', 'audio_too_short')
-      return
-
-    if self.embedding_exists(source_id):
-      self._log_error(source_id, 'no_exception', 'embeddings already exist')
-      return
-
-    outputs = self.embedding_model.embed(audio_array)
-    embeddings = outputs.embeddings
-    if embeddings is None:
-      return
-    hop_size_s = self.compute_hop_size_s(source_id, target_sample_rate)
-    for t, embedding in enumerate(embeddings):
-      offset_s = source_id.offset_s + t * hop_size_s
-      emb_source_id = hoplite_interface.EmbeddingSource(
-          dataset_name=source_id.dataset_name,
-          source_id=source_id.file_id,
-          offsets=np.array([offset_s], np.float16),
-      )
-      for channel_embedding in embedding:
-        yield (emb_source_id, channel_embedding)
-
-  def process_all(self, target_dataset_name: str | None = None):
+  def process_all(self, target_dataset_name: str | None = None, batch_size=32):
     """Process all audio examples."""
     self.update_configs()
-    # TODO(tomdenton): Prefetch audio in parallel for faster execution.
-    for source_id in self.audio_sources.iterate_all_sources(
+    source_iterator = self.audio_sources.iterate_all_sources(
         target_dataset_name
-    ):
-      for emb_source_id, embedding in self.process_source_id(source_id):
-        self.db.insert_embedding(embedding, emb_source_id)
+    )
+    state = {}
+    state['db'] = self.db
+    state['worker'] = self
+
+    with futures.ThreadPoolExecutor(
+        max_workers=self.audio_worker_threads,
+        initializer=worker_initializer,
+        initargs=(state,),
+    ) as executor:
+      for source_ids_batch in itertools.batched(source_iterator, batch_size):
+        got = executor.map(
+            process_source_id, itertools.repeat(state), source_ids_batch
+        )
+        # TODO(tomdenton): Consider using a db writer thread to avoid blocking.
+        for result in got:
+          if result is None:
+            continue
+          emb_source_ids, embeddings = result
+          for emb_source_id, embedding in zip(emb_source_ids, embeddings):
+            self.db.insert_embedding(embedding, emb_source_id)
     self.db.commit()

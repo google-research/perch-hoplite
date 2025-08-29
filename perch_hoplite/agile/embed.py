@@ -102,6 +102,13 @@ def process_source_id(
   return emb_source_ids, embs
 
 
+# TODO(tomdenton): Use itertools.batched in Python 3.12+
+def batched(iterable, n):
+  it = iter(iterable)
+  while batch := tuple(itertools.islice(it, n)):
+    yield batch
+
+
 class EmbedWorker:
   """Worker for embedding audio examples."""
 
@@ -277,7 +284,7 @@ class EmbedWorker:
         initializer=worker_initializer,
         initargs=(state,),
     ) as executor:
-      for source_ids_batch in itertools.batched(source_iterator, batch_size):
+      for source_ids_batch in batched(source_iterator, batch_size):
         got = executor.map(
             process_source_id, itertools.repeat(state), source_ids_batch
         )

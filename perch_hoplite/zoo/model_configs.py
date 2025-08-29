@@ -136,6 +136,10 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_config.window_size_s = 5.0
     model_config.hop_size_s = 5.0
     model_config.sample_rate = 32000
+    model_config.tfhub_path = (
+        'google/bird-vocalization-classifier/'
+        'tensorFlow2/bird-vocalization-classifier'
+    )
     model_config.tfhub_version = 8
     model_config.model_path = ''
   elif preset_name == ModelConfigName.PERCH_V2:
@@ -165,14 +169,14 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     embedding_dim = 2048
     model_config.window_size_s = 3.9124
     model_config.sample_rate = 10000
-    model_config.model_url = 'https://tfhub.dev/google/humpback_whale/1'
+    model_config.model_url = 'google/humpback-whale/tensorFlow2/humpback-whale'
     model_config.peak_norm = 0.02
   elif preset_name == ModelConfigName.MULTISPECIES_WHALE:
     model_key = 'google_whale'
     embedding_dim = 1280
     model_config.window_size_s = 5.0  # Is this correct?
     model_config.sample_rate = 24000
-    model_config.model_url = 'https://www.kaggle.com/models/google/multispecies-whale/TensorFlow2/default/2'
+    model_config.model_url = 'google/multispecies-whale/tensorFlow2/default'
     model_config.peak_norm = -1.0
   elif preset_name == ModelConfigName.SURFPERCH:
     model_key = 'taxonomy_model_tf'

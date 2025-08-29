@@ -25,11 +25,11 @@ from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.taxonomy import namespace
 from perch_hoplite.taxonomy import namespace_db
+from perch_hoplite.zoo import hub
 from perch_hoplite.zoo import taxonomy_model_tf
 from perch_hoplite.zoo import zoo_interface
 import tensorflow as tf
 import tensorflow.compat.v1 as tf1
-import tensorflow_hub as hub
 
 from tensorflow.lite.python import interpreter as tfl_interpreter  # pylint: disable=g-direct-tensorflow-import
 
@@ -415,7 +415,7 @@ class GoogleWhaleModel(zoo_interface.EmbeddingModel):
   @classmethod
   def load_humpback_model(
       cls,
-      model_url: str = 'https://tfhub.dev/google/humpback_whale/1',
+      model_url: str = hub.HUMPBACK_SLUG,
       **kwargs,
   ) -> 'GoogleWhaleModel':
     model = hub.load(model_url)
@@ -504,7 +504,7 @@ class TFHubModel(zoo_interface.EmbeddingModel):
     # Parent class takes a sample_rate arg which pylint doesn't find.
     config = config_dict.ConfigDict({
         'sample_rate': 16000,
-        'model_url': 'https://tfhub.dev/google/yamnet/1',
+        'model_url': 'google/yamnet/tensorFlow2/yamnet',
         'embedding_index': 1,
         'logits_index': 0,
     })
@@ -514,7 +514,7 @@ class TFHubModel(zoo_interface.EmbeddingModel):
   def vggish(cls):
     config = config_dict.ConfigDict({
         'sample_rate': 16000,
-        'model_url': 'https://tfhub.dev/google/vggish/1',
+        'model_url': 'google/vggish/tensorFlow2/vggish',
         'embedding_index': -1,
         'logits_index': -1,
     })

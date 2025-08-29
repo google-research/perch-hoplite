@@ -23,30 +23,9 @@ from etils import epath
 from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.taxonomy import namespace
+from perch_hoplite.zoo import hub
 from perch_hoplite.zoo import zoo_interface
 import tensorflow as tf
-import tensorflow_hub as hub
-
-
-PERCH_TF_HUB_URL = (
-    'https://www.kaggle.com/models/google/'
-    'bird-vocalization-classifier/frameworks/TensorFlow2/'
-    'variations/bird-vocalization-classifier/versions'
-)
-
-PERCH_V2_TF_HUB_URL = (
-    'https://www.kaggle.com/models/google/bird-vocalization-classifier/'
-    'tensorFlow2/perch_v2'
-)
-
-PERCH_V2_CPU_TF_HUB_URL = (
-    'https://www.kaggle.com/models/google/bird-vocalization-classifier/'
-    'tensorFlow2/perch_v2_cpu'
-)
-
-SURFPERCH_TF_HUB_URL = (
-    'https://www.kaggle.com/models/google/surfperch/TensorFlow2'
-)
 
 
 @dataclasses.dataclass
@@ -97,32 +76,23 @@ class TaxonomyModelTF(zoo_interface.EmbeddingModel):
       cls,
       config: config_dict.ConfigDict,
   ) -> 'TaxonomyModelTF':
-    if not hasattr(config, 'tfhub_version') or config.tfhub_version is None:
-      raise ValueError('tfhub_version is required to load from TFHub.')
+    if hasattr(config, 'tfhub_path') and config.tfhub_path is not None:
+      tfhub_path = config.tfhub_path
+    else:
+      raise ValueError('tfhub_path is required to load from TFHub.')
     if config.model_path:
       raise ValueError(
           'Exactly one of tfhub_version and model_path should be set.'
       )
-    if hasattr(config, 'tfhub_path'):
-      tfhub_path = config.tfhub_path
-      del config.tfhub_path
-    else:
-      tfhub_path = PERCH_TF_HUB_URL
 
-    if tfhub_path == PERCH_TF_HUB_URL and config.tfhub_version in (5, 6, 7):
-      # Due to SNAFUs uploading the new model version to KaggleModels,
-      # some version numbers were skipped.
-      raise ValueError('TFHub version 5, 6, and 7 do not exist.')
-
-    model_url = f'{tfhub_path}/{config.tfhub_version}'
     # This model behaves exactly like the usual saved_model.
-    model = hub.load(model_url)
+    model = hub.load(tfhub_path, config.tfhub_version)
 
     # Check whether the model support polymorphic batch shape.
     batchable = cls.is_batchable(model)
 
     # Get the labels CSV from TFHub.
-    model_path = hub.resolve(model_url)
+    model_path = hub.resolve(tfhub_path, config.tfhub_version)
     class_lists_glob = (epath.Path(model_path) / 'assets').glob('*.csv')
     class_lists = cls.load_class_lists(class_lists_glob)
     mutable_config = config.copy_and_resolve_references()
@@ -161,7 +131,7 @@ class TaxonomyModelTF(zoo_interface.EmbeddingModel):
         'hop_size_s': hop_size_s,
         'target_peak': 0.25,
         'tfhub_version': tfhub_version,
-        'tfhub_path': SURFPERCH_TF_HUB_URL,
+        'tfhub_path': hub.SURFPERCH_SLUG,
     })
     return cls.from_tfhub(cfg)
 
@@ -177,7 +147,7 @@ class TaxonomyModelTF(zoo_interface.EmbeddingModel):
         'hop_size_s': hop_size_s,
         'target_peak': 0.25,
         'tfhub_version': tfhub_version,
-        'tfhub_path': PERCH_V2_TF_HUB_URL,
+        'tfhub_path': hub.PERCH_V2_SLUG,
     })
     return cls.from_tfhub(cfg)
 

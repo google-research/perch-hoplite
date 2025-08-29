@@ -38,13 +38,13 @@ numpy = "^1.24.0"
 usearch = "^2.17"
 pandas = {version = "^2.1.1", extras=["gcp"]}
 ipywidgets = "^8.1"
+kagglehub = "^0.3"
 
 [tool.poetry.group.tf]
 optional = false
 
 [tool.poetry.group.tf.dependencies]
-tensorflow = "^2.19"
-tensorflow-hub = "^0.16"
+tensorflow = "^2.20"
 
 [tool.poetry.group.jax]
 optional = true

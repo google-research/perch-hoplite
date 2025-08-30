@@ -306,6 +306,12 @@ class TaxonomyModelTF(zoo_interface.EmbeddingModel):
             embeddings.shape[-1],
         ),
     )
+    # Reshape frontend output to match embeddings.
+    if frontend_output is not None:
+      frontend_output = np.reshape(
+          frontend_output,
+          framed_audio.shape[:2] + frontend_output.shape[1:],
+      )
     return zoo_interface.InferenceOutputs(
         embeddings=embeddings,
         logits=logits,

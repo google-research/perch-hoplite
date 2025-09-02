@@ -78,12 +78,17 @@ class ZooTest(parameterized.TestCase):
   def test_taxonomy_model_tf(self, model_return_type, batchable):
     class FakeModelFn:
       output_depths = {'label': 3, 'embedding': 256}
+      spectrogram_size = (500, 128)
 
       def infer_tf(self, audio_array):
         outputs = {
             k: np.zeros([audio_array.shape[0], d], dtype=np.float32)
             for k, d in self.output_depths.items()
         }
+        if batchable:
+          outputs['spectrogram'] = np.zeros(
+              [audio_array.shape[0], *self.spectrogram_size], dtype=np.float32
+          )
         if model_return_type == 'tuple':
           # Published Perch models v1 through v4 returned a tuple, not a dict.
           return outputs['label'], outputs['embedding']
@@ -107,12 +112,16 @@ class ZooTest(parameterized.TestCase):
     self.assertFalse(outputs.batched)
     self.assertSequenceEqual(outputs.embeddings.shape, [1, 1, 256])
     self.assertSequenceEqual(outputs.logits['label'].shape, [1, 3])
+    if batchable and model_return_type == 'dict':
+      self.assertSequenceEqual(outputs.frontend.shape, [1, 500, 128])
 
     # Check that multi-frame audio is handled properly.
     outputs = wrapped_model.embed(np.zeros([20 * 32000], dtype=np.float32))
     self.assertFalse(outputs.batched)
     self.assertSequenceEqual(outputs.embeddings.shape, [4, 1, 256])
     self.assertSequenceEqual(outputs.logits['label'].shape, [4, 3])
+    if batchable and model_return_type == 'dict':
+      self.assertSequenceEqual(outputs.frontend.shape, [4, 500, 128])
 
     # Check that a batch of single frame of audio is handled properly.
     outputs = wrapped_model.batch_embed(
@@ -121,6 +130,8 @@ class ZooTest(parameterized.TestCase):
     self.assertTrue(outputs.batched)
     self.assertSequenceEqual(outputs.embeddings.shape, [10, 1, 1, 256])
     self.assertSequenceEqual(outputs.logits['label'].shape, [10, 1, 3])
+    if batchable and model_return_type == 'dict':
+      self.assertSequenceEqual(outputs.frontend.shape, [10, 1, 500, 128])
 
     # Check that a batch of multi-frame audio is handled properly.
     outputs = wrapped_model.batch_embed(
@@ -129,6 +140,8 @@ class ZooTest(parameterized.TestCase):
     self.assertTrue(outputs.batched)
     self.assertSequenceEqual(outputs.embeddings.shape, [2, 4, 1, 256])
     self.assertSequenceEqual(outputs.logits['label'].shape, [2, 4, 3])
+    if batchable and model_return_type == 'dict':
+      self.assertSequenceEqual(outputs.frontend.shape, [2, 4, 500, 128])
 
 if __name__ == '__main__':
   absltest.main()

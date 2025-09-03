@@ -18,17 +18,17 @@
 import kagglehub
 import tensorflow as tf
 
+# Older model configs may contain a full model URL, as we used with TFHub.
+# These are kept for back-compat, and converted to Kaggle Models slugs.
 PERCH_TF_HUB_URL = (
     'https://www.kaggle.com/models/google/'
     'bird-vocalization-classifier/frameworks/TensorFlow2/'
     'variations/bird-vocalization-classifier/versions'
 )
-
 PERCH_V2_TF_HUB_URL = (
     'https://www.kaggle.com/models/google/bird-vocalization-classifier/'
     'tensorFlow2/perch_v2'
 )
-
 SURFPERCH_TF_HUB_URL = (
     'https://www.kaggle.com/models/google/surfperch/TensorFlow2'
 )
@@ -42,6 +42,8 @@ PERCH_V2_CPU_SLUG = PERCH_SLUG + 'perch_v2_cpu'
 SURFPERCH_SLUG = 'google/surfperch/tensorFlow2/TensorFlow2/1'
 HUMPBACK_SLUG = 'google/humpback-whale/tensorFlow2/humpback-whale'
 MULTISPECIES_WHALE_SLUG = 'google/multispecies-whale/tensorFlow2/default'
+YAMNET_SLUG = 'google/yamnet'
+VGGISH_SLUG = 'google/vggish'
 
 
 def normalize_slug(model_slug: str, model_version: int | None = None) -> str:

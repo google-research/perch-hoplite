@@ -50,6 +50,7 @@ class TaxonomyModelTF(zoo_interface.EmbeddingModel):
   class_list: dict[str, namespace.ClassList]
   batchable: bool
   target_peak: float | None = 0.25
+  tfhub_path: str | None = None
   tfhub_version: int | None = None
 
   @classmethod

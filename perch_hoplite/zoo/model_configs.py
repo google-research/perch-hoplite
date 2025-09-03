@@ -20,6 +20,7 @@ import enum
 import importlib
 
 from ml_collections import config_dict
+from perch_hoplite.zoo import hub
 from perch_hoplite.zoo import zoo_interface
 
 
@@ -150,7 +151,7 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_config.sample_rate = 32000
     taxonomy_model_tf = importlib.import_module(
         'perch_hoplite.zoo.taxonomy_model_tf')
-    model_config.tfhub_path = taxonomy_model_tf.PERCH_V2_TF_HUB_URL
+    model_config.tfhub_path = hub.PERCH_V2_SLUG
     model_config.tfhub_version = 2
     model_config.model_path = ''
   elif preset_name == ModelConfigName.PERCH_V2_CPU:
@@ -161,7 +162,7 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_config.sample_rate = 32000
     taxonomy_model_tf = importlib.import_module(
         'perch_hoplite.zoo.taxonomy_model_tf')
-    model_config.tfhub_path = taxonomy_model_tf.PERCH_V2_CPU_TF_HUB_URL
+    model_config.tfhub_path = hub.PERCH_V2_CPU_SLUG
     model_config.tfhub_version = 1
     model_config.model_path = ''
   elif preset_name == ModelConfigName.HUMPBACK:
@@ -187,7 +188,7 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     taxonomy_model_tf = importlib.import_module(
         'perch_hoplite.zoo.taxonomy_model_tf')
     model_config.tfhub_version = 1
-    model_config.tfhub_path = taxonomy_model_tf.SURFPERCH_TF_HUB_URL
+    model_config.tfhub_path = hub.SURFPERCH_SLUG
     model_config.model_path = ''
   elif preset_name.value.startswith('birdnet'):
     model_key = 'birdnet'
@@ -218,14 +219,14 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_key = 'tfhub_model'
     embedding_dim = 1024
     model_config.sample_rate = 16000
-    model_config.model_url = 'https://tfhub.dev/google/yamnet/1'
+    model_config.model_url = hub.YAMNET_SLUG
     model_config.embedding_index = 1
     model_config.logits_index = 0
   elif preset_name == ModelConfigName.VGGISH:
     model_key = 'tfhub_model'
     embedding_dim = 128
     model_config.sample_rate = 16000
-    model_config.model_url = 'https://tfhub.dev/google/vggish/1'
+    model_config.model_url = hub.VGGISH_SLUG
     model_config.embedding_index = -1
     model_config.logits_index = -1
   elif preset_name == ModelConfigName.AVES:

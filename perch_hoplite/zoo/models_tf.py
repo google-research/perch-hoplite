@@ -31,8 +31,6 @@ from perch_hoplite.zoo import zoo_interface
 import tensorflow as tf
 import tensorflow.compat.v1 as tf1
 
-from tensorflow.lite.python import interpreter as tfl_interpreter  # pylint: disable=g-direct-tensorflow-import
-
 
 @dataclasses.dataclass
 class SeparateEmbedModel(zoo_interface.EmbeddingModel):
@@ -326,8 +324,10 @@ class BirdNet(zoo_interface.EmbeddingModel):
       with tempfile.NamedTemporaryFile() as tmpf:
         model_file = epath.Path(config.model_path)
         model_file.copy(tmpf.name, overwrite=True)
-        model = tfl_interpreter.Interpreter(
-            tmpf.name, num_threads=config.num_tflite_threads
+        model = tf.lite.Interpreter(
+            tmpf.name,
+            num_threads=config.num_tflite_threads,
+            experimental_op_resolver_type=tf.lite.experimental.OpResolverType.BUILTIN_WITHOUT_DEFAULT_DELEGATES,
         )
       model.allocate_tensors()
     else:

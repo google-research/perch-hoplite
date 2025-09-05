@@ -18,8 +18,10 @@
 from collections.abc import Callable, Sequence
 import dataclasses
 import functools
+import tempfile
 from typing import Any
 
+from etils import epath
 import jax
 from jax import numpy as jnp
 from jax import random
@@ -69,6 +71,20 @@ def onnx_instancenormalization(*input_args, epsilon: float):
   b = b.reshape(-1, *dim_ones)
 
   return (input_ - input_mean) / jnp.sqrt(input_var + epsilon) * scale + b
+
+
+def cache_onnx_model(url: str) -> str:
+  """Cache the ONNX model at a local path."""
+  url = epath.Path(url)
+  filename = url.name
+  # Check for existing file first.
+  tempdir = tempfile.gettempdir()
+  cached_model_path = epath.Path(tempdir) / filename
+  if cached_model_path.exists():
+    return cached_model_path.as_posix()
+  # Download the model and cache it.
+  url.copy(cached_model_path)
+  return cached_model_path.as_posix()
 
 
 @dataclasses.dataclass

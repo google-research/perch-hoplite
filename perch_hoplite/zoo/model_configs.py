@@ -40,6 +40,7 @@ class ModelConfigName(enum.Enum):
   MULTISPECIES_WHALE = 'multispecies_whale'
   BEANS_BASELINE = 'beans_baseline'
   AVES = 'aves'
+  BIRDAVES = 'birdaves'
   PLACEHOLDER = 'placeholder'
 
 
@@ -68,6 +69,14 @@ class PresetInfo:
     return get_model_class(self.model_key).from_config(self.model_config)
 
 
+def _get_obj(module, attr_name):
+  """Get a thing from a module by name."""
+  if hasattr(module, attr_name):
+    return getattr(module, attr_name)
+  else:
+    raise ValueError(f'Module {module} does not have attribute {attr_name}')
+
+
 def get_model_class(model_key: str) -> type[zoo_interface.EmbeddingModel]:
   """Import and return the model class."""
   if model_key in (
@@ -78,27 +87,27 @@ def get_model_class(model_key: str) -> type[zoo_interface.EmbeddingModel]:
       'surfperch',
   ):
     module = importlib.import_module('perch_hoplite.zoo.taxonomy_model_tf')
-    return module.TaxonomyModelTF
+    return _get_obj(module, 'TaxonomyModelTF')
   elif model_key == 'google_whale':
     module = importlib.import_module('perch_hoplite.zoo.models_tf')
-    return module.GoogleWhaleModel
+    return _get_obj(module, 'GoogleWhaleModel')
   elif model_key == 'placeholder_model':
     module = importlib.import_module('perch_hoplite.zoo.placeholder_model')
-    return module.PlaceholderModel
+    return _get_obj(module, 'PlaceholderModel')
   elif model_key == 'birdnet':
     module = importlib.import_module('perch_hoplite.zoo.models_tf')
-    return module.BirdNet
+    return _get_obj(module, 'BirdNet')
   elif model_key == 'tfhub_model':
     module = importlib.import_module('perch_hoplite.zoo.models_tf')
-    return module.TFHubModel
+    return _get_obj(module, 'TFHubModel')
   elif model_key == 'aves':
     module = importlib.import_module('perch_hoplite.zoo.aves_model')
-    return module.AVES
+    return _get_obj(module, 'AVES')
   elif model_key == 'handcrafted_features_model':
     module = importlib.import_module(
         'perch_hoplite.zoo.handcrafted_features_model'
     )
-    return module.HandcraftedFeaturesModel
+    return _get_obj(module, 'HandcraftedFeaturesModel')
   else:
     raise ValueError(f'Unknown model key: {model_key}')
 
@@ -230,9 +239,23 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_config.embedding_index = -1
     model_config.logits_index = -1
   elif preset_name == ModelConfigName.AVES:
+    module = importlib.import_module('perch_hoplite.zoo.aves_model')
     model_key = 'aves'
     embedding_dim = 768
     model_config.sample_rate = 16000
+    cache_fn = _get_obj(module, 'cache_onnx_model')
+    model_config.model_path = cache_fn(
+        'https://storage.googleapis.com/esp-public-files/ported_aves/aves-base-bio.onnx'
+    )
+  elif preset_name == ModelConfigName.BIRDAVES:
+    module = importlib.import_module('perch_hoplite.zoo.aves_model')
+    model_key = 'aves'
+    embedding_dim = 768
+    model_config.sample_rate = 16000
+    cache_fn = _get_obj(module, 'cache_onnx_model')
+    model_config.model_path = cache_fn(
+        'https://storage.googleapis.com/esp-public-files/birdaves/birdaves-biox-large.onnx'
+    )
   elif preset_name == ModelConfigName.PLACEHOLDER:
     model_key = 'placeholder'
     embedding_dim = 128
@@ -242,7 +265,8 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     module = importlib.import_module(
         'perch_hoplite.zoo.handcrafted_features_model'
     )
-    model_config = module.HandcraftedFeaturesModel.beans_baseline_config()
+    model_class = _get_obj(module, 'HandcraftedFeaturesModel')
+    model_config = model_class.beans_baseline_config()
     embedding_dim = 80
   else:
     raise ValueError('Unsupported model preset: %s' % preset_name)

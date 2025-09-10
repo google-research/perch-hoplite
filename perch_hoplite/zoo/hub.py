@@ -83,7 +83,6 @@ def resolve(model_slug: str, model_version: int | None = None) -> str:
   if model_slug.startswith('/tmp'):
     # Assume this is a path to a downloaded model, rather than a kaggle model.
     return model_slug
-
   model_path = normalize_slug(model_slug, model_version)
   cached_model_path = kagglehub.model_download(model_path)
   return cached_model_path

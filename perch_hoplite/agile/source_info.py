@@ -21,6 +21,7 @@ from typing import Iterator
 from absl import logging
 from etils import epath
 from ml_collections import config_dict
+from perch_hoplite import audio_io
 from perch_hoplite.db import interface as hoplite_interface
 import soundfile
 import tqdm
@@ -124,19 +125,6 @@ class AudioSources(hoplite_interface.EmbeddingMetadata):
         )
     return AudioSources(tuple(other_globs.values()))
 
-  def get_file_length_s_and_sample_rate(
-      self, filepath: str
-  ) -> tuple[float, int]:
-    """Returns the length of the audio file in seconds."""
-    try:
-      with epath.Path(filepath).open('rb') as f:
-        sf = soundfile.SoundFile(f)
-        file_length_s = sf.frames / sf.samplerate
-        return file_length_s, sf.samplerate
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-      logging.error('Failed to parse audio file (%s) : %s.', filepath, exc)
-    return -1, -1
-
   def iterate_all_sources(
       self,
       target_dataset_name: str | None = None,
@@ -163,8 +151,8 @@ class AudioSources(hoplite_interface.EmbeddingMetadata):
 
       for filepath in tqdm.tqdm(filepaths):
         file_id = filepath.as_posix()[len(base_path.as_posix()) + 1 :]
-        audio_len_s, sample_rate_hz = self.get_file_length_s_and_sample_rate(
-            filepath
+        audio_len_s, sample_rate_hz = (
+            audio_io.get_file_length_s_and_sample_rate(filepath)
         )
         if shard_len_s is None:
           yield SourceId(

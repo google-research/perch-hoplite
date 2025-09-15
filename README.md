@@ -76,10 +76,10 @@ pip install git+https://github.com/google-research/perch-hoplite.git
 
 Then run the tests and check that they pass:
 ```bash
-python -m unittest discover -s hoplite/db/tests -p "*test.py"
-python -m unittest discover -s hoplite/taxonomy -p "*test.py"
-python -m unittest discover -s hoplite/zoo -p "*test.py"
-python -m unittest discover -s hoplite/agile/tests -p "*test.py"
+python -m unittest discover -s perch_hoplite/db/tests -p "*test.py"
+python -m unittest discover -s perch_hoplite/taxonomy -p "*test.py"
+python -m unittest discover -s perch_hoplite/zoo -p "*test.py"
+python -m unittest discover -s perch_hoplite/agile/tests -p "*test.py"
 ```
 
 Or, install with poetry:

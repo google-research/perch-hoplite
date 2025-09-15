@@ -140,16 +140,26 @@ def load_audio_window(
     dtype: str = 'float32',
 ) -> np.ndarray:
   """Load a slice of audio from a file, hopefully efficiently."""
-  # TODO(tomdenton): Find a reliable way to load a flac audio window.
-  # If a flac file has the incorrect length in its header, seeking past the
-  # end of the file causes the system to hang. This is a bad enough outcome
-  # that we don't risk it.
+
+  extension = os.path.splitext(filepath)[-1].lower()
+  if extension in ('wav', 'flac', 'ogg', 'opus'):
+    try:
+      return load_audio_window_soundfile(
+          filepath, offset_s, sample_rate, window_size_s, dtype
+      )
+    except soundfile.LibsndfileError:
+      logging.info('Failed to load audio with libsndfile: %s', filepath)
+
+  # Try librosa.
   try:
-    return load_audio_window_soundfile(
-        filepath, offset_s, sample_rate, window_size_s, dtype
+    duration = window_size_s if window_size_s > 0 else None
+    audio, _ = librosa.load(
+        filepath, sr=sample_rate, offset=offset_s, duration=duration
     )
-  except soundfile.LibsndfileError:
-    logging.info('Failed to load audio with libsndfile: %s', filepath)
+    return audio.astype(dtype)
+  except Exception as exc:  # pylint: disable=broad-exception-caught
+    logging.error('Failed to load audio with librosa (%s) : %s.', filepath, exc)
+
   # This fail-over is much slower but more reliable; the entire audio file
   # is loaded (and possibly resampled) and then we extract the target audio.
   audio = load_audio(filepath, sample_rate)
@@ -269,3 +279,26 @@ def load_url_audio(
   audio = load_audio_file(f.name, target_sample_rate=sample_rate)
   os.unlink(f.name)
   return audio.astype(dtype)
+
+
+def get_file_length_s_and_sample_rate(filepath: str) -> tuple[float, int]:
+  """As it says on the tin, or (-1, -1) if unparseable."""
+  extension = os.path.splitext(filepath)[-1].lower()
+  if extension in ('wav', 'flac', 'ogg', 'opus'):
+    try:
+      with epath.Path(filepath).open('rb') as f:
+        sf = soundfile.SoundFile(f)
+        file_length_s = sf.frames / sf.samplerate
+        return file_length_s, sf.samplerate
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+      logging.error('Failed to parse audio file (%s) : %s.', filepath, exc)
+
+  # Try librosa.
+  try:
+    sr = librosa.get_samplerate(filepath)
+    file_length_s = librosa.get_duration(filename=filepath)
+    return file_length_s, sr
+  except Exception as exc:  # pylint: disable=broad-exception-caught
+    logging.error('Failed to parse audio file (%s) : %s.', filepath, exc)
+
+  return -1, -1

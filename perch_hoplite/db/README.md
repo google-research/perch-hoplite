@@ -10,9 +10,9 @@ The database handles the embeddings, source metadata for each embedding, labels 
 
 ## Backends
 
-The Hoplite database is accessed via the API in `interface.py`. It is possible to reimplement the API on different backends. As of this writing, two backends are implemented: an SQLite database and an in-memory implementation which simply uses a number of Numpy arrays.
+The Hoplite database is accessed via the API in `interface.py`. It is possible to reimplement the API on different backends. As of this writing, two backends are implemented: an SQLite+usearch database and an in-memory implementation using a collection of Numpy arrays and dicts.
 
-The `db_loader.py` file contains some tooling for dumping an instance of a Hoplite database into a new backend. (eg, persisting an in-memory database to SQLite, or loading an SQLite database into memory for faster operation.)
+The `db_loader.py` file contains some tooling for copying a Hoplite databases, including into a new backend. (eg, persisting an in-memory database to SQLite+usearch.)
 
 ## Database structure
 
@@ -23,8 +23,6 @@ The **embeddings** table contains the embedding vectors, produced by some pretra
 The **source** table holds information for joining embeddings with the source data.  Each *source* consists of a unique ID and a string identifier, for example a relative file path under some root directory, and a *dataset name*, which allows defining groups of related sources.
 
 The **labels** table contains any labels or annotations on the embeddings. Each label consists of an *embedding id*, the *label* string, a *type* (eg, positive or negative), and a *provenance* string (eg, annotator's name, or id for the model which produced a pseudo-label). You can have many labels per embedding, for example indicating different entities represented in the audio, or different annotator's decisions for the same label+embedding pair.
-
-The **edges** table is used for fast approximate nearest neighbor embeddings search.
 
 Finally, the **metadata** table is a string-to-json key-value store for handling arbitrary additional metadata. This is used, for example, to indicate which embedding model was used to produce the embeddings in the database.
 
@@ -37,7 +35,7 @@ For up-to-date usage, see `tests/hoplite_test.py`. We give a brief overview of f
 The in-memory database uses fixed-size numpy arrays for storing embeddings and sparse lists of graph edges. The embedding dimension should be known from the embedding model. The `max_size` is the maximum number of embeddings the database will contain. The `degree_bound` determines the maximum number of outgoing edges per embedding.
 
 ```
-from chirp.projects.hoplite import in_mem_impl
+from perch_hoplite.db import in_mem_impl
 
 db = in_mem_impl.InMemoryGraphSearchDB.create(
     embedding_dim=1280,
@@ -47,14 +45,15 @@ db = in_mem_impl.InMemoryGraphSearchDB.create(
 db.setup()
 ```
 
-The SQLite backend has no particular limit on the number of embeddings or number of edges per vertex. You can create an SQLite backend like so:
+The SQLite+usearch backend has no particular limit on the number of embeddings or number of edges per vertex. You can create an SQLite backend like so:
 
 ```
-from chirp.projects.hoplite import sqlite_impl
+from perch_hoplite.db import sqlite_usearch_impl
 
-db = sqlite_impl.SQLiteGraphSearchDB.create(
+db = sqlite_usearch_impl.SQLiteUsearchDB.create(
     db_path=db_file_path,
-    embedding_dim=1280,
+    usearch_cfg=sqlite_usearch_impl.get_default_usearch_config(
+      embedding_dim=1280),
 )
 db.setup()
 ```
@@ -64,7 +63,7 @@ db.setup()
 Adding embeddings to the database is simple. Describe the embedding source, and insert it using the API. The insertion call will return the unique ID for this embedding.
 
 ```
-from chirp.projects.hoplite import interface
+from perch_hoplite.db import interface
 
 dataset_name = 'my_data'
 source_id = 'some_file.wav'
@@ -143,7 +142,7 @@ source = db.get_embedding_source(uid)
 
 ### Utility functions
 
-Some core info that we typically need to refer to can be accessed through the API:
+Some core info can be accessed through the API:
 
 ```
 embedding_count = db.count_embeddings()
@@ -170,7 +169,7 @@ For bioacoustic embeddings, we recommend *inner product*, as it handles mixture 
 Brute force search capabilities are handled by `brutalism.py`. Here's some example usage:
 
 ```
-from chirp.projects.hoplite import brutalism
+from perch_hoplite.db import brutalism
 
 query = np.random.normal(size=[1280])
 score_fn = np.dot
@@ -211,34 +210,4 @@ In short, you should only move to indexed search when you're really annoyed with
 
 For very large datasets, approximate nearest neighbor search can greatly speed up analysis. For this, we define a graph on the embeddings and explore using a greedy nearest-neighbor search. The algorithm is an adaptation of the Vamana algorithm, detailed in the [DiskANN paper](https://proceedings.neurips.cc/paper_files/paper/2019/file/09853c7fb1d3f8ee67a61b6bf4a7f8e6-Paper.pdf).
 
-Indexing is performed with algorithms implemented in JAX, which can run on either CPU or GPU. GPU indexing is considerably faster than CPU, and likely necessary for datasets at the scale where indexing is necessary. However, GPUs have limited memory. Thus, we implement a *sharded* indexing strategy, where subsets of the data are indexed, and then those shard indexes are merged into a single large index, which is stored in the DB.
-
-For now, JAX indexing only uses the inner product metric.
-
-```
-from chirp.projects.hoplite import index_jax
-
-index_jax.build_sharded_index(
-  db,
-  shard_size=500_000,
-  shard_degree_bound=128,
-  degree_bound=512,
-  max_delegates=256,
-  alpha=1.5,
-  num_steps=-1,
-  random_seed=42,
-  max_violations=1,
-  sample_size=0,
-  )
-```
-
-Once indexing is complete, we can search like so:
-
-```
-from chirp.projects.hoplite import index
-
-hoplite_index = index.HopliteSearchIndex(db)
-results, _ = hoplite_index.greedy_search(query, db.get_embedding)
-for r in results:
-  print(r.embedding_id, r.sort_score)
-```
+The `SQLiteUsearchDB` stores all vectors in a usearch vector database, allowing very fast approximate nearest neighbor search.

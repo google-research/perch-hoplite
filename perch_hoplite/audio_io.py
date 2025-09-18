@@ -58,8 +58,7 @@ def load_audio_file(
   if target_sample_rate <= 0:
     # Use the native sample rate.
     target_sample_rate = None
-  extension = os.path.splitext(filepath)[-1].lower()
-  if extension in ('wav', 'flac', 'ogg', 'opus'):
+  if expect_soundfile_compatibility(filepath):
     with filepath.open('rb') as f:
       sf = soundfile.SoundFile(file=f)
       audio = sf.read()
@@ -75,6 +74,7 @@ def load_audio_file(
   # Handle other audio formats.
   # Because librosa passes file handles to soundfile, we need to copy the file
   # to a temporary file before passing it to librosa.
+  extension = epath.Path(filepath).suffix.lower()
   with tempfile.NamedTemporaryFile(
       mode='w+b', suffix=extension, delete=False
   ) as f:
@@ -141,8 +141,7 @@ def load_audio_window(
 ) -> np.ndarray:
   """Load a slice of audio from a file, hopefully efficiently."""
 
-  extension = os.path.splitext(filepath)[-1].lower()
-  if extension in ('wav', 'flac', 'ogg', 'opus'):
+  if expect_soundfile_compatibility(filepath):
     try:
       return load_audio_window_soundfile(
           filepath, offset_s, sample_rate, window_size_s, dtype
@@ -283,8 +282,7 @@ def load_url_audio(
 
 def get_file_length_s_and_sample_rate(filepath: str) -> tuple[float, int]:
   """As it says on the tin, or (-1, -1) if unparseable."""
-  extension = os.path.splitext(filepath)[-1].lower()
-  if extension in ('wav', 'flac', 'ogg', 'opus'):
+  if expect_soundfile_compatibility(filepath):
     try:
       with epath.Path(filepath).open('rb') as f:
         sf = soundfile.SoundFile(f)
@@ -302,3 +300,16 @@ def get_file_length_s_and_sample_rate(filepath: str) -> tuple[float, int]:
     logging.error('Failed to parse audio file (%s) : %s.', filepath, exc)
 
   return -1, -1
+
+
+def expect_soundfile_compatibility(filepath: str | epath.PathLike) -> bool:
+  """Returns True if soundfile can be used to load the audio file."""
+  extension = epath.Path(filepath).suffix.lower()
+  if extension in ('.wav', '.flac', '.ogg', '.opus'):
+    try:
+      with epath.Path(filepath).open('rb') as f:
+        soundfile.SoundFile(f)
+        return True
+    except soundfile.LibsndfileError:
+      pass
+  return False

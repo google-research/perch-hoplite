@@ -527,7 +527,7 @@ def _setup_sqlite_tables(cursor: sqlite3.Cursor) -> None:
       label STRING NOT NULL,
       type INT NOT NULL,
       provenance STRING NOT NULL,
-      FOREIGN KEY (embedding_id) REFERENCES embeddings(id)
+      FOREIGN KEY (embedding_id) REFERENCES hoplite_embeddings(id)
   )""")
 
   # Create indices for efficient lookups.

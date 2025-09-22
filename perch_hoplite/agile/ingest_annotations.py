@@ -20,7 +20,6 @@ import dataclasses
 from typing import Callable
 
 from etils import epath
-from ml_collections import config_dict
 import pandas as pd
 from perch_hoplite.agile import embed
 from perch_hoplite.agile import source_info
@@ -29,7 +28,7 @@ from perch_hoplite.db import interface
 from perch_hoplite.taxonomy import annotations_fns
 import tqdm
 
-BASE_PATH = epath.Path('gs://chirp-public-bucket/soundscapes/')
+BASE_PATH = epath.Path('gs://chirp-public-bucket/soundscapes')
 
 
 @dataclasses.dataclass
@@ -103,13 +102,21 @@ CORNELL_LOADER = lambda x: annotations_fns.load_cornell_annotations(
     x, file_id_prefix='audio/'
 )
 
+
 PRESETS: dict[str, AnnotatedDatasetIngestor] = {
-    'powdermill': AnnotatedDatasetIngestor(
-        base_path=BASE_PATH / 'powdermill',
-        audio_glob='*/*.wav',
-        dataset_name='powdermill',
-        annotation_filename='powdermill.csv',
-        annotation_load_fn=annotations_fns.load_powdermill_annotations,
+    'anuraset': AnnotatedDatasetIngestor(
+        base_path=BASE_PATH / 'anuraset',
+        dataset_name='anuraset',
+        audio_glob='raw_data/*/*.wav',
+        annotation_filename='annotations.csv',
+        annotation_load_fn=annotations_fns.load_anuraset_annotations,
+    ),
+    'coffee_farms': AnnotatedDatasetIngestor(
+        base_path=BASE_PATH / 'coffee_farms',
+        dataset_name='coffee_farms',
+        audio_glob='audio/*.flac',
+        annotation_filename='annotations.csv',
+        annotation_load_fn=CORNELL_LOADER,
     ),
     'hawaii': AnnotatedDatasetIngestor(
         base_path=BASE_PATH / 'hawaii',
@@ -125,16 +132,23 @@ PRESETS: dict[str, AnnotatedDatasetIngestor] = {
         annotation_filename='annotations.csv',
         annotation_load_fn=CORNELL_LOADER,
     ),
-    'coffee_farms': AnnotatedDatasetIngestor(
-        base_path=BASE_PATH / 'coffee_farms',
-        dataset_name='coffee_farms',
+    'peru': AnnotatedDatasetIngestor(
+        base_path=BASE_PATH / 'peru',
+        dataset_name='peru',
         audio_glob='audio/*.flac',
         annotation_filename='annotations.csv',
         annotation_load_fn=CORNELL_LOADER,
     ),
-    'peru': AnnotatedDatasetIngestor(
-        base_path=BASE_PATH / 'peru',
-        dataset_name='peru',
+    'powdermill': AnnotatedDatasetIngestor(
+        base_path=BASE_PATH / 'powdermill',
+        audio_glob='*/*.wav',
+        dataset_name='powdermill',
+        annotation_filename='powdermill.csv',
+        annotation_load_fn=annotations_fns.load_powdermill_annotations,
+    ),
+    'sierras_kahl': AnnotatedDatasetIngestor(
+        base_path=BASE_PATH / 'sierras_kahl',
+        dataset_name='sierras_kahl',
         audio_glob='audio/*.flac',
         annotation_filename='annotations.csv',
         annotation_load_fn=CORNELL_LOADER,
@@ -146,19 +160,12 @@ PRESETS: dict[str, AnnotatedDatasetIngestor] = {
         annotation_filename='annotations.csv',
         annotation_load_fn=CORNELL_LOADER,
     ),
-    'sierras_kahl': AnnotatedDatasetIngestor(
-        base_path=BASE_PATH / 'sierras_kahl',
-        dataset_name='sierras_kahl',
-        audio_glob='audio/*.flac',
+    'weldy_calltype': AnnotatedDatasetIngestor(
+        base_path=BASE_PATH / 'weldy_calltype',
+        dataset_name='weldy_calltype',
+        audio_glob='annotated_recordings/*.wav',
         annotation_filename='annotations.csv',
-        annotation_load_fn=CORNELL_LOADER,
-    ),
-    'anuraset': AnnotatedDatasetIngestor(
-        base_path=BASE_PATH / 'anuraset',
-        dataset_name='anuraset',
-        audio_glob='raw_data/*/*.wav',
-        annotation_filename='annotations.csv',
-        annotation_load_fn=annotations_fns.load_anuraset_annotations,
+        annotation_load_fn=annotations_fns.load_weldy_annotations,
     ),
 }
 

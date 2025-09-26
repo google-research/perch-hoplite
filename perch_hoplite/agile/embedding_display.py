@@ -160,6 +160,7 @@ class EmbeddingDisplay:
   frame_rate: int = 100
   audio: np.ndarray | None = None
   spectrogram: np.ndarray | None = None
+  labels: Sequence[interface.Label] = ()
 
   def _make_label_button(self, button_label: str) -> ipywidgets.Button:
     """Create an ipywidget button for the given label."""
@@ -199,6 +200,7 @@ class EmbeddingDisplay:
       rank: int = -1,
       show_score: bool = True,
       button_columns: int = 4,
+      show_labels: bool = False,
   ):
     """Display the audio, spectrogram, and label buttons."""
     self._make_label_widgets(labels)
@@ -227,6 +229,9 @@ class EmbeddingDisplay:
       print(f'rank         : {rank}')
     if show_score:
       print(f'score        : {(self.score):.2f}')
+    if show_labels:
+      for lbl in self.labels:
+        print(f'\t{lbl.label}: {lbl.type.value}')
 
     # Display widgets
     grid = ipywidgets.GridspecLayout(
@@ -295,12 +300,16 @@ class EmbeddingDisplayGroup:
       db: interface.HopliteDBInterface,
       sample_rate_hz: int,
       frame_rate: int,
+      filter_labels: Sequence[str] = (),
       **kwargs,
   ) -> 'EmbeddingDisplayGroup':
     """Create an EmbeddingDisplayGroup from a Hoplite TopKSearchResults object."""
     members = []
     for result in results:
       source = db.get_embedding_source(result.embedding_id)
+      labels = db.get_labels(embedding_id=result.embedding_id)
+      if [l for l in labels if l.label in filter_labels]:
+        continue
       members.append(
           EmbeddingDisplay(
               embedding_id=result.embedding_id,
@@ -310,6 +319,7 @@ class EmbeddingDisplayGroup:
               score=result.sort_score,
               sample_rate_hz=sample_rate_hz,
               frame_rate=frame_rate,
+              labels=labels,
           )
       )
     return cls.create(members=members, sample_rate_hz=sample_rate_hz, **kwargs)
@@ -360,6 +370,7 @@ class EmbeddingDisplayGroup:
       positive_labels: Sequence[str] = (),
       show_score: bool = True,
       paged_mode: bool = True,
+      show_labels: bool = False,
   ):
     """Display the audio, spectrogram, and label buttons."""
     clear_output()
@@ -380,6 +391,7 @@ class EmbeddingDisplayGroup:
           show_score=show_score,
           rank=r + rank_offset,
           button_columns=1,
+          show_labels=show_labels,
       )
       print('\n' + '-' * 80)
 

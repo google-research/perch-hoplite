@@ -245,7 +245,7 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_config.sample_rate = 16000
     cache_fn = _get_obj(module, 'cache_onnx_model')
     model_config.model_path = cache_fn(
-        'https://storage.googleapis.com/esp-public-files/ported_aves/aves-base-bio.onnx'
+       'https://storage.googleapis.com/esp-public-files/ported_aves/aves-base-bio.onnx'
     )
   elif preset_name == ModelConfigName.BIRDAVES:
     module = importlib.import_module('perch_hoplite.zoo.aves_model')

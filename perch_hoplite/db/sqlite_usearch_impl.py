@@ -59,27 +59,22 @@ class SQLiteUsearchDB(interface.HopliteDBInterface):
   """SQLite hoplite database, using USearch for vector storage.
 
   USearch provides both indexing for approximate nearest neighbor search and
-  fast disk-based random access to vectors for the complete database.
-
-  To handle this, we maintain two USearch indexes:
-  1. An in-memory index, which is used when adding new embeddings.
-  2. A disk-based index, which is used for random access to the entire database.
-
-  We leave the in-memory index unpopulated until a new embedding is added,
-  preferring to use the disk-based index. Once an embedding is added, the
-  in-memory index is populated and used for all subsequent operations. On
-  commit, the in-memory index is persisted to disk.
+  fast disk-based random access to vectors for the complete database. USearch
+  will default to working with disk-based vectors, unless we insert or remove
+  embeddings, in which case we load the index into memory and use it from there
+  for all subsequent operations. On database commit, the in-memory index is
+  persisted to disk.
 
   Attributes:
-    db_path: The path to the database file.
+    db_path: The path to the database directory.
     db: The sqlite3 database connection.
-    ui: The USearch index. Points to either _ui_mem or _ui_disk_view, depending
-      on whether new embeddings have been added.
-    _ui_mem: The in-memory USearch index used for building the index.
-    _ui_disk_view: A disk view of the USearch index.
+    ui: The USearch index.
     embedding_dim: The dimension of the embeddings.
     embedding_dtype: The data type of the embeddings.
     _cursor: The sqlite3 cursor.
+    _ui_loaded: Whether the USearch index was loaded in memory.
+    _ui_updated: Whether the USearch index was updated since the last load and
+      needs to be persisted to disk at some point in the future.
   """
 
   # User-provided.
@@ -88,8 +83,6 @@ class SQLiteUsearchDB(interface.HopliteDBInterface):
   # Instantiated during creation.
   db: sqlite3.Connection
   ui: uindex.Index
-  _ui_mem: uindex.Index
-  _ui_disk_view: uindex.Index
 
   # Obtained from the usearch_cfg.
   embedding_dim: int
@@ -97,6 +90,8 @@ class SQLiteUsearchDB(interface.HopliteDBInterface):
 
   # Dynamic state.
   _cursor: sqlite3.Cursor | None = None
+  _ui_loaded: bool = False
+  _ui_updated: bool = False
 
   @classmethod
   def create(
@@ -132,29 +127,34 @@ class SQLiteUsearchDB(interface.HopliteDBInterface):
       db.commit()
 
     usearch_dtype = USEARCH_DTYPES[usearch_cfg.dtype]
-    ui_mem = uindex.Index(
-        ndim=usearch_cfg.embedding_dim,
-        metric=getattr(uindex.MetricKind, usearch_cfg.metric_name),
-        expansion_add=usearch_cfg.expansion_add,
-        expansion_search=usearch_cfg.expansion_search,
-        dtype=usearch_dtype,
-    )
     index_path = db_path / UINDEX_FILENAME
-    ui_disk_view = uindex.Index(ndim=usearch_cfg.embedding_dim)
     if index_path.exists():
-      ui_disk_view.view(index_path.as_posix())
-      ui = ui_disk_view
+      ui = uindex.Index(
+          ndim=usearch_cfg.embedding_dim,
+          path=index_path,
+          view=True,
+      )
+      ui_in_memory = False
     else:
-      ui = ui_mem
+      ui = uindex.Index(
+          ndim=usearch_cfg.embedding_dim,
+          metric=getattr(uindex.MetricKind, usearch_cfg.metric_name),
+          expansion_add=usearch_cfg.expansion_add,
+          expansion_search=usearch_cfg.expansion_search,
+          dtype=usearch_dtype,
+          path=index_path,
+          view=False,
+      )
+      ui_in_memory = True
 
     return SQLiteUsearchDB(
         db_path=db_path.as_posix(),
         db=db,
         ui=ui,
-        _ui_mem=ui_mem,
-        _ui_disk_view=ui_disk_view,
         embedding_dim=usearch_cfg.embedding_dim,
         embedding_dtype=usearch_cfg.dtype,
+        _ui_loaded=ui_in_memory,
+        _ui_updated=ui_in_memory,
     )
 
   @property
@@ -204,10 +204,9 @@ class SQLiteUsearchDB(interface.HopliteDBInterface):
     if self._cursor is not None:
       self._cursor.close()
       self._cursor = None
-    if self.ui.size > self._ui_disk_view.size:
-      # We have added something to the in-memory index, so persist to disk.
-      # This check is sufficient because the index is strictly additive.
-      self.ui.save(self._usearch_filepath.as_posix())
+    if self._ui_updated:
+      self.ui.save()
+      self._ui_updated = False
 
   def get_embedding_ids(self) -> np.ndarray:
     # Note that USearch can also create a list of all keys, but it seems
@@ -285,12 +284,12 @@ class SQLiteUsearchDB(interface.HopliteDBInterface):
     )
     embedding_id = int(cursor.lastrowid)
 
-    if self._ui_mem.size == 0 and self._ui_disk_view.size > 0:
-      # We need to load the disk view into memory.
-      self._ui_mem.load(self._usearch_filepath.as_posix())
-      self.ui = self._ui_mem
+    if not self._ui_loaded:
+      self.ui.load()
+      self._ui_loaded = True
 
     self.ui.add(embedding_id, embedding.astype(self.embedding_dtype))
+    self._ui_updated = True
     return embedding_id
 
   def count_embeddings(self) -> int:

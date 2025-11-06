@@ -57,14 +57,12 @@ def numpy_dot(data: np.ndarray, query: np.ndarray) -> np.ndarray:
 
 def numpy_cos(data: np.ndarray, query: np.ndarray) -> np.ndarray:
   """Simple numpy cosine similarity, allowing multiple queries."""
-  data_norms = np.linalg.norm(data, axis=1)
-  query_norms = np.linalg.norm(query, axis=-1)
-  if len(query.shape) > 1:
-    unit_data = data / data_norms[:, np.newaxis]
-    unit_query = query / query_norms[:, np.newaxis]
-    return np.tensordot(unit_data, unit_query, axes=(-1, -1))
+  data_norms = np.linalg.norm(data, axis=-1, keepdims=True)
+  query_norms = np.linalg.norm(query, axis=-1, keepdims=True)
   unit_data = data / data_norms
   unit_query = query / query_norms
+  if len(query.shape) > 1:
+    return np.tensordot(unit_data, unit_query, axes=(-1, -1))
   return np.dot(unit_data, unit_query)
 
 

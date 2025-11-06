@@ -20,6 +20,7 @@ import tempfile
 
 import numpy as np
 from perch_hoplite.db import brutalism
+from perch_hoplite.db import score_functions
 from perch_hoplite.db.tests import test_utils
 
 from absl.testing import absltest
@@ -58,11 +59,12 @@ class BrutalismTest(parameterized.TestCase):
         db,
         query_embedding,
         search_list_size=10,
-        score_fn=np.dot,
+        score_fn=score_functions.get_score_fn('cos'),
         sample_size=sample_size,
         rng_seed=42,
     )
     got_ids = [r.embedding_id for r in results]
+    got_scores = [r.sort_score for r in results]
     if sample_size is None:
       self.assertEqual(scores.shape, (1000,))
       self.assertIn(query_idx, got_ids)
@@ -78,13 +80,21 @@ class BrutalismTest(parameterized.TestCase):
         query_embedding,
         search_list_size=10,
         batch_size=128,
-        score_fn=np.dot,
+        score_fn=score_functions.get_score_fn('cos'),
         sample_size=sample_size,
         rng_seed=42,
     )
     np.testing.assert_equal(np.sort(t_scores), np.sort(scores))
     t_got_ids = [r.embedding_id for r in t_results]
-    self.assertSequenceEqual(got_ids, t_got_ids)
+    t_got_scores = [r.sort_score for r in t_results]
+    num_equal_to_last = np.sum(np.isclose(t_got_scores, t_got_scores[-1]))
+    self.assertSetEqual(
+        # Embedding IDs need to be checked as a set due to score ties. Also, the
+        # last score (and its corresponding embedding IDs) must be ignored due
+        # to potential ties with results beyond top-k.
+        set(list(zip(got_ids, got_scores))[:-num_equal_to_last]),
+        set(list(zip(t_got_ids, t_got_scores))[:-num_equal_to_last]),
+    )
 
 
 if __name__ == '__main__':

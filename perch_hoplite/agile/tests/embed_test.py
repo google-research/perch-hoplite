@@ -73,22 +73,53 @@ class EmbedTest(absltest.TestCase):
         model_config=placeholder_model_config,
     )
 
-    db = db_config.load_db()
+    with self.subTest('embedding'):
+      db = db_config.load_db()
 
-    embed_worker = embed.EmbedWorker(
-        audio_sources=aduio_sources,
-        model_config=model_config,
-        db=db,
-    )
-    embed_worker.process_all()
-    # The hop size is 1.0s and each file is 6.0s, so we should get 6 embeddings
-    # per file. There are six files, so we should get 36 embeddings.
-    self.assertEqual(db.count_embeddings(), 36)
+      embed_worker = embed.EmbedWorker(
+          audio_sources=aduio_sources,
+          model_config=model_config,
+          db=db,
+      )
+      embed_worker.process_all()
+      # The hop size is 1.0s and each file is 6.0s, so we get 6 embeddings
+      # per file. There are six files, so we should get 36 embeddings.
+      self.assertEqual(db.count_embeddings(), 36)
+      _, embs = db.get_embeddings(db.get_embedding_ids())
+      self.assertEqual(embs.shape[-1], 32)
 
-    # Check that the metadata is set correctly.
-    got_md = db.get_metadata(key=None)
-    self.assertIn('audio_sources', got_md)
-    self.assertIn('model_config', got_md)
+      # Check that the metadata is set correctly.
+      got_md = db.get_metadata(key=None)
+      self.assertIn('audio_sources', got_md)
+      self.assertIn('model_config', got_md)
+
+    with self.subTest('labels'):
+      in_mem_db_config = config_dict.ConfigDict()
+      # DB embedding dim needs to match the number of classes we will extract.
+      in_mem_db_config.embedding_dim = 6
+      in_mem_db_config.max_size = 100
+      db_config = db_loader.DBConfig(
+          db_key='in_mem',
+          db_config=in_mem_db_config,
+      )
+      db = db_config.load_db()
+
+      model_config.logits_key = 'label'
+      model_config.logits_idxes = (1, 2, 3, 5, 8, 13)
+
+      embed_worker = embed.EmbedWorker(
+          audio_sources=aduio_sources,
+          model_config=model_config,
+          db=db,
+      )
+      embed_worker.process_all()
+      # The hop size is 1.0s and each file is 6.0s, so we get 6 embeddings
+      # per file. There are six files, so we should get 36 embeddings.
+      self.assertEqual(db.count_embeddings(), 36)
+      _, embs = db.get_embeddings(db.get_embedding_ids())
+      # The placeholder model defaults to 128-dim'l outputs, but we only want
+      # the channels specified in the logits_idxes.
+      self.assertEqual(embs.shape[-1], 6)
 
 
 if __name__ == '__main__':

@@ -40,11 +40,17 @@ class ModelConfig(hoplite_interface.EmbeddingMetadata):
     model_key: Key for the model wrapper class.
     embedding_dim: Dimensionality of the embedding.
     model_config: Config dict of arguments to instantiate the model wrapper.
+    logit_key: If provided, model predictions will be stored instead of raw
+      embeddings.
+    logit_idxes: When storing model predictions, allows selecting a subset of
+      prediction classes.
   """
 
   model_key: str
   embedding_dim: int
   model_config: config_dict.ConfigDict
+  logits_key: str | None = None
+  logits_idxes: tuple[int, ...] | None = None
 
 
 def worker_initializer(state):
@@ -81,7 +87,17 @@ def process_source_id(
     return
 
   outputs = worker.embedding_model.embed(audio_array)
-  embeddings = outputs.embeddings
+  logits_key = state['worker'].model_config.logits_key
+  if logits_key is None:
+    embeddings = outputs.embeddings
+  else:
+    embeddings = outputs.logits[logits_key]
+    logits_idxes = state['worker'].model_config.logits_idxes
+    if logits_idxes is not None:
+      embeddings = embeddings[..., logits_idxes]
+    # Add channel axis to match the expected shape of the embeddings.
+    embeddings = embeddings[:, np.newaxis, :]
+
   if embeddings is None:
     return
 

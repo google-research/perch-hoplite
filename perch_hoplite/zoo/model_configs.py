@@ -31,6 +31,7 @@ class ModelConfigName(enum.Enum):
   BIRDNET_V2_2 = 'birdnet_V2.2'
   BIRDNET_V2_3 = 'birdnet_V2.3'
   PERCH_V2 = 'perch_v2'
+  PERCH_V2_GPU = 'perch_v2_gpu'
   PERCH_V2_CPU = 'perch_v2_cpu'
   PERCH_8 = 'perch_8'
   SURFPERCH = 'surfperch'
@@ -67,6 +68,15 @@ class PresetInfo:
   def load_model(self) -> zoo_interface.EmbeddingModel:
     """Loads the embedding model."""
     return get_model_class(self.model_key).from_config(self.model_config)
+
+
+def has_gpu_tf() -> bool:
+  """Returns True if the system has a GPU and TensorFlow installed."""
+  try:
+    import tensorflow as tf  # pylint: disable=g-import-not-at-top
+  except ImportError:
+    return False
+  return bool(tf.test.gpu_device_name())
 
 
 def _get_obj(module, attr_name):
@@ -153,6 +163,12 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_config.tfhub_version = 8
     model_config.model_path = ''
   elif preset_name == ModelConfigName.PERCH_V2:
+    # Check for GPU support, and load the appropriate model.
+    if has_gpu_tf():
+      return get_preset_model_config(ModelConfigName.PERCH_V2_GPU)
+    else:
+      return get_preset_model_config(ModelConfigName.PERCH_V2_CPU)
+  elif preset_name == ModelConfigName.PERCH_V2_GPU:
     model_key = 'taxonomy_model_tf'
     embedding_dim = 1536
     model_config.window_size_s = 5.0
@@ -239,19 +255,19 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_config.embedding_index = -1
     model_config.logits_index = -1
   elif preset_name == ModelConfigName.AVES:
-    module = importlib.import_module('perch_hoplite.zoo.aves_model')
     model_key = 'aves'
     embedding_dim = 768
     model_config.sample_rate = 16000
+    module = importlib.import_module('perch_hoplite.zoo.aves_model')
     cache_fn = _get_obj(module, 'cache_onnx_model')
     model_config.model_path = cache_fn(
        'https://storage.googleapis.com/esp-public-files/ported_aves/aves-base-bio.onnx'
     )
   elif preset_name == ModelConfigName.BIRDAVES:
-    module = importlib.import_module('perch_hoplite.zoo.aves_model')
     model_key = 'aves'
     embedding_dim = 768
     model_config.sample_rate = 16000
+    module = importlib.import_module('perch_hoplite.zoo.aves_model')
     cache_fn = _get_obj(module, 'cache_onnx_model')
     model_config.model_path = cache_fn(
         'https://storage.googleapis.com/esp-public-files/birdaves/birdaves-biox-large.onnx'

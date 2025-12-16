@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "perch-hoplite"
-version = "0.1.2"
+version = "0.1.3"
 description = "Tooling for agile modeling on large machine perception embedding databases."
 authors = ["Perch Team <chirp-bio@google.com>"]
 license = "Apache 2.0"
@@ -9,7 +9,7 @@ license = "Apache 2.0"
 # Project metadata. Available keys are documented at:
 # https://packaging.python.org/en/latest/specifications/declaring-project-metadata
 name = "perch-hoplite"
-version = "0.1.2"
+version = "0.1.3"
 description = "Tooling for agile modeling on large machine perception embedding databases."
 readme = "README.md"
 requires-python = ">=3.10"

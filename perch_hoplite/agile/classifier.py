@@ -201,7 +201,6 @@ def train_linear_classifier(
       train_idxes, add_weak_negatives=True, repeat=True
   )
   progress = tqdm.tqdm(enumerate(train_iter_), total=num_train_steps)
-  update_steps = set([b * (num_train_steps // 100) for b in range(100)])
 
   for step, batch in enumerate(train_iter_):
     if step >= num_train_steps:
@@ -209,9 +208,8 @@ def train_linear_classifier(
     step_loss = train_step(
         batch.multihot, batch.embedding, batch.is_labeled_mask
     )
-    if step in update_steps:
-      progress.update(n=num_train_steps // 100)
-      progress.set_description(f'Loss {step_loss:.8f}')
+    progress.update(n=1)
+    progress.set_description(f'Loss {step_loss:.8f}')
   progress.clear()
   progress.close()
 

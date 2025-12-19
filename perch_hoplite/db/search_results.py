@@ -23,8 +23,9 @@ import heapq
 class SearchResult:
   """Container for a single search result."""
 
-  # Embedding ID.
-  embedding_id: int
+  # Embedding window ID.
+  window_id: int
+
   # Score used for sorting the result.
   sort_score: float
 
@@ -51,7 +52,7 @@ class TopKSearchResults:
 
   def __post_init__(self):
     heapq.heapify(self.search_results)
-    self._ids = set(q.embedding_id for q in self.search_results)
+    self._ids = set(q.window_id for q in self.search_results)
 
   def __iter__(self):
     for q in sorted(self.search_results, reverse=True):
@@ -60,14 +61,14 @@ class TopKSearchResults:
   def update(self, search_result: SearchResult, force_insert=False):
     """Update Results with the new result."""
     if not force_insert and self.will_filter(
-        search_result.embedding_id, search_result.sort_score
+        search_result.window_id, search_result.sort_score
     ):
       return
     if len(self.search_results) >= self.top_k:
-      popped = heapq.heappop(self.search_results).embedding_id
+      popped = heapq.heappop(self.search_results).window_id
       self._ids.remove(popped)
     heapq.heappush(self.search_results, search_result)
-    self._ids.add(search_result.embedding_id)
+    self._ids.add(search_result.window_id)
 
   @property
   def min_score(self) -> float:

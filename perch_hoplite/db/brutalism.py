@@ -15,9 +15,10 @@
 
 """Brute force search and reranking utilities."""
 
+from collections.abc import Callable
 import concurrent
 import threading
-from typing import Any, Callable, Sequence
+from typing import Any
 
 import numpy as np
 from perch_hoplite.db import interface
@@ -29,9 +30,9 @@ def worker_initializer(state):
   state[name + 'db'] = state['db'].thread_split()
 
 
-def brute_search_worker_fn(emb_ids: Sequence[int], state: dict[str, Any]):
+def brute_search_worker_fn(emb_ids: np.ndarray, state: dict[str, Any]):
   name = threading.current_thread().name
-  emb_ids, embeddings = state[name + 'db'].get_embeddings(emb_ids)
+  embeddings = state[name + 'db'].get_embeddings_batch(emb_ids)
   scores = state['score_fn'](embeddings, state['query_embedding'])
   top_locs = np.argpartition(scores, state['search_list_size'], axis=-1)
   return emb_ids[top_locs], scores[top_locs]
@@ -145,12 +146,12 @@ def get_brute_search_ids(
     rng_seed: int | None = None,
 ):
   """Get IDs for brute force search, subsampling as needed."""
-  ids = db.get_embedding_ids()
+  ids = np.array(db.match_window_ids())
   if sample_size is None:
     return ids
   if isinstance(sample_size, float):
     if sample_size < 0 or sample_size > 1:
-      raise ValueError('FLoat sample size must be between 0 and 1.')
+      raise ValueError('Float sample size must be between 0 and 1.')
     sample_size = int(sample_size * db.count_embeddings())
   np.random.default_rng(rng_seed).shuffle(ids)
   return ids[:sample_size]
@@ -167,8 +168,8 @@ def rerank(
   for r in results:
     new_results.update(
         search_results.SearchResult(
-            r.embedding_id,
-            score_fn(query_embedding, db.get_embedding(r.embedding_id)),
+            r.window_id,
+            score_fn(query_embedding, db.get_embedding(r.window_id)),
         )
     )
   return new_results

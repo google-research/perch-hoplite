@@ -18,6 +18,7 @@
 import shutil
 import tempfile
 
+from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.agile import classifier_data
 from perch_hoplite.db import interface
@@ -87,7 +88,9 @@ class ClassifierDataTest(absltest.TestCase):
 
     # Check that the labeled examples are split correctly.
     for label in db_test_utils.CLASS_LABELS:
-      class_label_ids = db.get_embeddings_by_label(label, label_type=None)
+      class_label_ids = db.match_window_ids(
+          annotations_filter=config_dict.create(eq=dict(label=label))
+      )
       eval_count = np.intersect1d(class_label_ids, eval_ids).shape[0]
       self.assertGreaterEqual(eval_count, 10)
 
@@ -145,12 +148,16 @@ class ClassifierDataTest(absltest.TestCase):
     train_ids, eval_ids = data_manager.get_train_test_split()
     self.assertEmpty(np.intersect1d(train_ids, eval_ids))
     for label in db_test_utils.CLASS_LABELS[:3]:
-      class_label_ids = db.get_embeddings_by_label(label, label_type=None)
+      class_label_ids = db.match_window_ids(
+          annotations_filter=config_dict.create(eq=dict(label=label))
+      )
       eval_count = np.intersect1d(class_label_ids, eval_ids).shape[0]
       self.assertGreaterEqual(eval_count, 10)
     # Show that examples without target labels are not included.
     for label in db_test_utils.CLASS_LABELS[3:]:
-      class_label_ids = db.get_embeddings_by_label(label, label_type=None)
+      class_label_ids = db.match_window_ids(
+          annotations_filter=config_dict.create(eq=dict(label=label))
+      )
       eval_count = np.intersect1d(class_label_ids, eval_ids).shape[0]
       train_count = np.intersect1d(class_label_ids, train_ids).shape[0]
       self.assertEqual(eval_count, 0)
@@ -196,13 +203,11 @@ class ClassifierDataTest(absltest.TestCase):
         rng=np.random.default_rng(42),
     )
 
-    add_label = lambda id, lbl_idx, lbl_type: db.insert_label(
-        interface.Label(
-            embedding_id=id,
-            label=db_test_utils.CLASS_LABELS[lbl_idx],
-            type=lbl_type,
-            provenance='test',
-        )
+    add_label = lambda id, lbl_idx, lbl_type: db.insert_annotation(
+        window_id=id,
+        label=db_test_utils.CLASS_LABELS[lbl_idx],
+        label_type=lbl_type,
+        provenance='test',
     )
 
     with self.subTest('single_positive_label'):

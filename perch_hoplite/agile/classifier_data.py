@@ -13,12 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tools for processing data for the Agile2 classifier."""
+"""Tools for processing data for the Agile classifier."""
 
+from collections.abc import Iterator, Sequence
 import dataclasses
 import itertools
-from typing import Any, Iterator, Sequence
+from typing import Any
 
+from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.db import interface
 
@@ -79,23 +81,25 @@ class DataManager:
 
   def get_target_labels(self) -> tuple[str, ...]:
     if self.target_labels is None:
-      return tuple(self.db.get_classes())
+      return tuple(self.db.get_all_labels())
     return self.target_labels
 
   def get_multihot_labels(self, idx: int) -> tuple[np.ndarray, np.ndarray]:
     """Create the multihot label for one example."""
-    labels = self.db.get_labels(idx)
+    annotations = self.db.get_all_annotations(
+        config_dict.create(eq=dict(window_id=idx))
+    )
     target_labels = self.get_target_labels()
     lbl_idxes = {label: i for i, label in enumerate(target_labels)}
     pos = np.zeros(len(target_labels), dtype=np.float32)
     neg = np.zeros(len(target_labels), dtype=np.float32)
-    for label in labels:
-      if label.label not in lbl_idxes:
+    for annotation in annotations:
+      if annotation.label not in lbl_idxes:
         continue
-      if label.type == interface.LabelType.POSITIVE:
-        pos[lbl_idxes[label.label]] += 1.0
-      elif label.type == interface.LabelType.NEGATIVE:
-        neg[lbl_idxes[label.label]] += 1.0
+      if annotation.label_type == interface.LabelType.POSITIVE:
+        pos[lbl_idxes[annotation.label]] += 1.0
+      elif annotation.label_type == interface.LabelType.NEGATIVE:
+        neg[lbl_idxes[annotation.label]] += 1.0
     count = pos + neg
     mask = count > 0
     denom = np.maximum(count, 1.0)
@@ -163,13 +167,23 @@ class AgileDataManager(DataManager):
       self, label: str
   ) -> tuple[np.ndarray, np.ndarray]:
     """Create a train/test split for a single label."""
-    pos_ids = self.db.get_embeddings_by_label(
-        label, interface.LabelType.POSITIVE, None
+    pos_ids = self.db.match_window_ids(
+        annotations_filter=config_dict.create(
+            eq=dict(
+                label=label,
+                label_type=interface.LabelType.POSITIVE,
+            )
+        )
     )
-    neg_ids = self.db.get_embeddings_by_label(
-        label, interface.LabelType.NEGATIVE, None
+    neg_ids = self.db.match_window_ids(
+        annotations_filter=config_dict.create(
+            eq=dict(
+                label=label,
+                label_type=interface.LabelType.NEGATIVE,
+            )
+        )
     )
-    if not pos_ids.shape[0]:
+    if not pos_ids:
       print('Warning: No positive examples for label: ', label)
       return np.array([], np.int64), np.array([], np.int64)
     all_ids = np.union1d(pos_ids, neg_ids)
@@ -238,7 +252,7 @@ class AgileDataManager(DataManager):
         yield LabeledExample.create_batched(ex_batch)
       return
 
-    weak_ids = np.setdiff1d(self.db.get_embedding_ids(), labeled_ids)
+    weak_ids = np.setdiff1d(self.db.match_window_ids(), labeled_ids)
     weak_iterator = self.labeled_example_iterator(weak_ids, repeat=True)
     weak_iterator = batched(weak_iterator, self.weak_negatives_batch_size)
 
@@ -265,8 +279,13 @@ class FullyAnnotatedDataManager(DataManager):
     pos_id_sets = {}
     eval_id_sets = {}
     for label in self.get_target_labels():
-      pos_id_sets[label] = self.db.get_embeddings_by_label(
-          label, interface.LabelType.POSITIVE, None
+      pos_id_sets[label] = self.db.match_window_ids(
+          annotations_filter=config_dict.create(
+              eq=dict(
+                  label=label,
+                  label_type=interface.LabelType.POSITIVE,
+              )
+          )
       )
       self.rng.shuffle(pos_id_sets[label])
       eval_id_sets[label] = pos_id_sets[label][: self.min_eval_examples]
@@ -280,7 +299,7 @@ class FullyAnnotatedDataManager(DataManager):
       train_id_sets[label] = pos_set[: self.train_examples_per_class]
     if self.add_unlabeled_train_examples:
       unlabeled_ids = np.setdiff1d(
-          self.db.get_embedding_ids(),
+          self.db.match_window_ids(),
           np.concatenate(tuple(pos_id_sets.values()), axis=0),
       )
       np.setdiff1d(unlabeled_ids, all_eval_ids)
@@ -290,7 +309,10 @@ class FullyAnnotatedDataManager(DataManager):
 
     # The final eval set is the complement of all selected training id's.
     all_train_ids = np.concatenate(tuple(train_id_sets.values()), axis=0)
-    eval_ids = np.setdiff1d(self.db.get_embedding_ids(), all_train_ids)
+    eval_ids = np.setdiff1d(
+        self.db.match_window_ids(),
+        all_train_ids,
+    )
     return all_train_ids, eval_ids
 
 

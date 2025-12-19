@@ -33,7 +33,7 @@ import soundfile
 
 
 @dataclasses.dataclass
-class ModelConfig(hoplite_interface.EmbeddingMetadata):
+class ModelConfig(hoplite_interface.HopliteConfig):
   """Configuration for embedding model.
 
   Attributes:
@@ -61,6 +61,7 @@ def worker_initializer(state):
 def process_source_id(
     state,
     source_id: source_info.SourceId,
+    window_size_s: float,
 ):
   """Process a single audio source."""
   worker = state['worker']
@@ -78,12 +79,21 @@ def process_source_id(
   ):
     return
 
-  embs = db.get_embeddings_by_source(
-      dataset_name=source_id.dataset_name,
-      source_id=source_id.file_id,
-      offsets=np.array([source_id.offset_s], np.float16),
+  embs = db.match_window_ids(
+      deployments_filter=config_dict.create(
+          eq=dict(project=source_id.dataset_name)
+      ),
+      recordings_filter=config_dict.create(eq=dict(filename=source_id.file_id)),
+      windows_filter=config_dict.create(
+          eq=dict(
+              offsets=np.array(
+                  [source_id.offset_s, source_id.offset_s + window_size_s],
+                  np.float16,
+              )
+          )
+      ),
   )
-  if embs.shape[0] > 0:
+  if embs:
     return
 
   outputs = worker.embedding_model.embed(audio_array)
@@ -101,21 +111,19 @@ def process_source_id(
   if embeddings is None:
     return
 
-  emb_source_ids = []
+  sources = []
+  offsets = []
   embs = []
 
   hop_size_s = worker.compute_hop_size_s(source_id, target_sample_rate)
   for t, embedding in enumerate(embeddings):
     offset_s = source_id.offset_s + t * hop_size_s
-    emb_source_id = hoplite_interface.EmbeddingSource(
-        dataset_name=source_id.dataset_name,
-        source_id=source_id.file_id,
-        offsets=np.array([offset_s], np.float16),
-    )
+    offsets_arr = np.array([offset_s, offset_s + window_size_s], np.float16)
     for channel_embedding in embedding:
-      emb_source_ids.append(emb_source_id)
+      sources.append(source_id)
+      offsets.append(offsets_arr)
       embs.append(channel_embedding)
-  return emb_source_ids, embs
+  return sources, offsets, embs
 
 
 # TODO(tomdenton): Use itertools.batched in Python 3.12+
@@ -145,6 +153,7 @@ class EmbedWorker:
       self.embedding_model = model_class.from_config(model_config.model_config)
     else:
       self.embedding_model = embedding_model
+    self.window_size_s = getattr(self.embedding_model, 'window_size_s')
     self.audio_globs = {
         g.dataset_name: g for g in self.audio_sources.audio_globs
     }
@@ -278,37 +287,95 @@ class EmbedWorker:
 
   def embedding_exists(self, source_id: source_info.SourceId) -> bool:
     """Check whether embeddings already exist for the given source ID."""
-    embs = self.db.get_embeddings_by_source(
-        dataset_name=source_id.dataset_name,
-        source_id=source_id.file_id,
-        offsets=np.array([source_id.offset_s], np.float16),
+    embs = self.db.match_window_ids(
+        deployments_filter=config_dict.create(
+            eq=dict(project=source_id.dataset_name)
+        ),
+        recordings_filter=config_dict.create(
+            eq=dict(filename=source_id.file_id)
+        ),
+        windows_filter=config_dict.create(
+            eq=dict(
+                offsets=np.array([source_id.offset_s], np.float16),
+            )
+        ),
+        limit=1,
     )
-    return embs.shape[0] > 0
+    return bool(embs)
 
   def process_all(self, target_dataset_name: str | None = None, batch_size=32):
     """Process all audio examples."""
+
+    # Update model config and audio sources in the database.
     self.update_configs()
-    source_iterator = self.audio_sources.iterate_all_sources(
-        target_dataset_name
-    )
+
+    # Create missing deployments and recordings in the database.
+    source_id_to_deployment_id = {}
+    source_id_to_recording_id = {}
+    for source in self.audio_sources.iterate_all_sources(target_dataset_name):
+      source_id = source.to_id()
+
+      deployments = self.db.get_all_deployments(
+          config_dict.create(eq=dict(project=source.dataset_name))
+      )
+      if not deployments:
+        deployment_id = self.db.insert_deployment(
+            name=source.dataset_name, project=source.dataset_name
+        )
+      else:
+        deployment_id = deployments[0].id
+      source_id_to_deployment_id[source_id] = deployment_id
+
+      recordings = self.db.get_all_recordings(
+          config_dict.create(
+              eq=dict(
+                  filename=source.file_id,
+                  deployment_id=deployment_id,
+              )
+          )
+      )
+      if not recordings:
+        recording_id = self.db.insert_recording(
+            filename=source.file_id, deployment_id=deployment_id
+        )
+      else:
+        recording_id = recordings[0].id
+      source_id_to_recording_id[source_id] = recording_id
+
+    # Commit all changes for deployments and recordings to the database.
+    self.db.commit()
+
+    # Process all sources.
     state = {}
     state['db'] = self.db
     state['worker'] = self
-
     with futures.ThreadPoolExecutor(
         max_workers=self.audio_worker_threads,
         initializer=worker_initializer,
         initargs=(state,),
     ) as executor:
+      source_iterator = self.audio_sources.iterate_all_sources(
+          target_dataset_name
+      )
       for source_ids_batch in batched(source_iterator, batch_size):
         got = executor.map(
-            process_source_id, itertools.repeat(state), source_ids_batch
+            process_source_id,
+            itertools.repeat(state),
+            source_ids_batch,
+            itertools.repeat(self.window_size_s),
         )
         # TODO(tomdenton): Consider using a db writer thread to avoid blocking.
         for result in got:
           if result is None:
             continue
-          emb_source_ids, embeddings = result
-          for emb_source_id, embedding in zip(emb_source_ids, embeddings):
-            self.db.insert_embedding(embedding, emb_source_id)
+          for source, offsets, embedding in zip(*result):
+            source_id = source.to_id()
+            recording_id = source_id_to_recording_id[source_id]
+            self.db.insert_window(
+                recording_id=recording_id,
+                embedding=embedding,
+                offsets=offsets,
+            )
+
+    # Commit all changes for windows to the database.
     self.db.commit()

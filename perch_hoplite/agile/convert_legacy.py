@@ -15,8 +15,8 @@
 
 """Conversion for TFRecord embeddings to Hoplite DB."""
 
+from collections.abc import Sequence
 import json
-from typing import Sequence
 
 from etils import epath
 from ml_collections import config_dict
@@ -25,7 +25,6 @@ from perch_hoplite.agile import embed
 from perch_hoplite.agile import source_info
 from perch_hoplite.db import db_loader
 from perch_hoplite.db import in_mem_impl
-from perch_hoplite.db import interface
 from perch_hoplite.db import sqlite_usearch_impl
 import tensorflow as tf
 import tqdm
@@ -56,10 +55,7 @@ def convert_tfrecords(
       raise ValueError(f'DB path {db_path} already exists.')
     db = db_loader.create_new_usearch_db(db_path, emb_dim)
   elif db_type == 'in_mem':
-    db = in_mem_impl.InMemoryGraphSearchDB.create(
-        embedding_dim=emb_dim,
-        max_size=kwargs['max_size'],
-    )
+    db = in_mem_impl.InMemoryGraphSearchDB.create(embedding_dim=emb_dim)
   else:
     raise ValueError(f'Unknown db type: {db_type}')
 
@@ -95,7 +91,9 @@ def convert_tfrecords(
   db.insert_metadata('audio_sources', audio_sources.to_config_dict())
   db.insert_metadata('model_config', model_config.to_config_dict())
   hop_size_s = model_config.model_config.hop_size_s
+  window_size_s = model_config.model_config.window_size_s
 
+  deployment_id = db.insert_deployment(name=dataset_name, project=dataset_name)
   for ex in tqdm.tqdm(ds.as_numpy_iterator()):
     embs = ex['embedding']
     flat_embeddings = np.reshape(embs, [-1, embs.shape[-1]])
@@ -103,11 +101,14 @@ def convert_tfrecords(
     offset_s = ex['timestamp_s']
     if max_count > 0 and db.count_embeddings() >= max_count:
       break
+    recording_id = db.insert_recording(
+        filename=file_id, deployment_id=deployment_id
+    )
     for i in range(flat_embeddings.shape[0]):
       embedding = flat_embeddings[i]
-      offset = np.array(offset_s + hop_size_s * i)
-      source = interface.EmbeddingSource(dataset_name, file_id, offset)
-      db.insert_embedding(embedding, source)
+      start_offset = offset_s + hop_size_s * i
+      offsets = np.array([start_offset, start_offset + window_size_s])
+      db.insert_window(recording_id, offsets, embedding)
       if max_count > 0 and db.count_embeddings() >= max_count:
         break
   db.commit()

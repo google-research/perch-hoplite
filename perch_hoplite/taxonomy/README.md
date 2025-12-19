@@ -1,3 +1,5 @@
+# Taxonomy
+
 This is a micro-library for managing labels from various domains, and
 transformations between different sets of labels.
 
@@ -18,7 +20,7 @@ there are many (thousands) of labels. For example:
 By providing a dedicated library for label handling, we hope to isolate solving
 these problems from other code.
 
-# Namespaces, Mappings, and ClassLists.
+## Namespaces, Mappings, and ClassLists.
 
 We provide three high-level objects for managing labels:
 
@@ -77,7 +79,7 @@ maps to exactly one label in the target namespace.
 Mappings can be composed, although this should be done with care: There is no
 guarantee that composed mappings give the same result as direct mappings.
 
-# Data Sources
+## Data Sources
 
 The taxonomy DB contains data from the
 [eBird / Clements list](https://www.birds.cornell.edu/clementschecklist/download/),

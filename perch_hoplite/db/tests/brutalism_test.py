@@ -53,7 +53,7 @@ class BrutalismTest(parameterized.TestCase):
   def test_threaded_brute_search(self, db_type, sample_size):
     rng = np.random.default_rng(42)
     db = test_utils.make_db(self.tempdir, db_type, 1000, rng, EMBEDDING_SIZE)
-    query_idx = db.get_one_embedding_id()
+    query_idx = db.match_window_ids(limit=1)[0]
     query_embedding = db.get_embedding(query_idx)
     results, scores = brutalism.brute_search(
         db,
@@ -63,8 +63,7 @@ class BrutalismTest(parameterized.TestCase):
         sample_size=sample_size,
         rng_seed=42,
     )
-    got_ids = [r.embedding_id for r in results]
-    got_scores = [r.sort_score for r in results]
+    got_ids = [r.window_id for r in results]
     if sample_size is None:
       self.assertEqual(scores.shape, (1000,))
       self.assertIn(query_idx, got_ids)
@@ -84,16 +83,16 @@ class BrutalismTest(parameterized.TestCase):
         sample_size=sample_size,
         rng_seed=42,
     )
-    np.testing.assert_equal(np.sort(t_scores), np.sort(scores))
-    t_got_ids = [r.embedding_id for r in t_results]
+    np.testing.assert_almost_equal(np.sort(t_scores), np.sort(scores))
+    t_got_ids = [r.window_id for r in t_results]
     t_got_scores = [r.sort_score for r in t_results]
     num_equal_to_last = np.sum(np.isclose(t_got_scores, t_got_scores[-1]))
     self.assertSetEqual(
         # Embedding IDs need to be checked as a set due to score ties. Also, the
         # last score (and its corresponding embedding IDs) must be ignored due
         # to potential ties with results beyond top-k.
-        set(list(zip(got_ids, got_scores))[:-num_equal_to_last]),
-        set(list(zip(t_got_ids, t_got_scores))[:-num_equal_to_last]),
+        set(got_ids[:-num_equal_to_last]),
+        set(t_got_ids[:-num_equal_to_last]),
     )
 
 

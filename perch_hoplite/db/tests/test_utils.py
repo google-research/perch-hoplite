@@ -35,13 +35,10 @@ def make_db(
 ) -> interface.HopliteDBInterface:
   """Create a test DB of the specified type."""
   if db_type == 'in_mem':
-    db = in_mem_impl.InMemoryGraphSearchDB.create(
-        embedding_dim=embedding_dim,
-        max_size=num_embeddings,
-    )
+    db = in_mem_impl.InMemoryGraphSearchDB.create(embedding_dim=embedding_dim)
   elif db_type == 'sqlite_usearch':
     usearch_cfg = sqlite_usearch_impl.get_default_usearch_config(embedding_dim)
-    db = sqlite_usearch_impl.SQLiteUsearchDB.create(
+    db = sqlite_usearch_impl.SQLiteUSearchDB.create(
         db_path=path, usearch_cfg=usearch_cfg
     )
   else:
@@ -69,16 +66,27 @@ def insert_random_embeddings(
   """Insert randomly generated embedding vectors into the DB."""
   rng = np.random.default_rng(seed=seed)
   np_alpha = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
-  dataset_names = ('a', 'b', 'c')
+
+  projects = ('a', 'b', 'c')
+  deployment_ids = [
+      db.insert_deployment(name=f'deployment_{project}', project=project)
+      for project in projects
+  ]
+
+  window_size_s = 5.0
   for _ in range(num_embeddings):
-    embedding = np.float32(rng.normal(size=emb_dim, loc=0, scale=0.1))
-    dataset_name = rng.choice(dataset_names)
-    source_name = ''.join(
+    deployment_id = rng.choice(deployment_ids).item()
+    filename = ''.join(
         [str(a) for a in rng.choice(np_alpha, size=8, replace=False)]
     )
+    recording_id = db.insert_recording(
+        filename=filename, deployment_id=deployment_id
+    )
+
+    embedding = np.float32(rng.normal(size=emb_dim, loc=0, scale=0.1))
     offsets = rng.integers(0, 100, size=[1])
-    source = interface.EmbeddingSource(dataset_name, source_name, offsets)
-    db.insert_embedding(embedding, source)
+    offsets = np.array([offsets[0], offsets[0] + window_size_s])
+    db.insert_window(recording_id, offsets, embedding)
   db.commit()
 
 
@@ -87,13 +95,34 @@ def clone_embeddings(
     target_db: interface.HopliteDBInterface,
 ):
   """Copy all embeddings to target_db and provide an id mapping."""
-  id_mapping = {}
-  for source_id in source_db.get_embedding_ids():
-    id_mapping[source_id] = target_db.insert_embedding(
-        source_db.get_embedding(source_id),
-        source_db.get_embedding_source(source_id),
+
+  # First, clone deployments and keep a map between source and target ids.
+  deployment_id_mapping = {None: None}
+  for deployment in source_db.get_all_deployments():
+    target_id = target_db.insert_deployment(**deployment.to_kwargs(skip=['id']))
+    deployment_id_mapping[deployment.id] = target_id
+
+  # Second, clone recordings and keep a map between source and target ids.
+  recording_id_mapping = {}
+  for recording in source_db.get_all_recordings():
+    target_id = target_db.insert_recording(
+        deployment_id=deployment_id_mapping[recording.deployment_id],
+        **recording.to_kwargs(skip=['id', 'deployment_id']),
     )
-  return id_mapping
+    recording_id_mapping[recording.id] = target_id
+
+  # Finally, clone windows and keep a map between source and target ids.
+  window_id_mapping = {}
+  for window in source_db.get_all_windows():
+    target_id = target_db.insert_window(
+        recording_id=recording_id_mapping[window.recording_id],
+        embedding=source_db.get_embedding(window.id),
+        **window.to_kwargs(skip=['id', 'embedding', 'recording_id']),
+    )
+    window_id_mapping[window.id] = target_id
+
+  # Return the window id mapping.
+  return window_id_mapping
 
 
 def add_random_labels(
@@ -104,18 +133,17 @@ def add_random_labels(
     provenance: str = 'test',
 ):
   """Insert random labels for a subset of embeddings."""
-  for idx in db.get_embedding_ids():
+  for idx in db.match_window_ids():
     if rng.random() < unlabeled_prob:
       continue
     if rng.random() < positive_label_prob:
       label_type = interface.LabelType.POSITIVE
     else:
       label_type = interface.LabelType.NEGATIVE
-    label = interface.Label(
-        embedding_id=idx,
+    db.insert_annotation(
+        window_id=idx,
         label=str(rng.choice(CLASS_LABELS)),
-        type=label_type,
+        label_type=label_type,
         provenance=provenance,
     )
-    db.insert_label(label)
   db.commit()

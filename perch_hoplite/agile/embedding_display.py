@@ -15,9 +15,9 @@
 
 """Object wrapping an embedded audio example for display."""
 
+from collections.abc import Callable, Iterator, Sequence
 import dataclasses
 import functools
-from typing import Callable, Iterator, Sequence
 
 import IPython
 from IPython.display import clear_output  # pylint: disable=g-importing-member
@@ -26,6 +26,7 @@ import ipywidgets
 import librosa
 from librosa import display as librosa_display
 from matplotlib import pyplot as plt
+from ml_collections import config_dict
 import numpy as np
 from perch_hoplite import audio_io
 from perch_hoplite.db import interface
@@ -148,7 +149,7 @@ class QueryDisplay:
 class EmbeddingDisplay:
   """Object wrapping an embedded audio example for display."""
 
-  embedding_id: int
+  window_id: int
   dataset_name: str
   uri: str
   offset_s: float
@@ -160,7 +161,7 @@ class EmbeddingDisplay:
   frame_rate: int = 100
   audio: np.ndarray | None = None
   spectrogram: np.ndarray | None = None
-  labels: Sequence[interface.Label] = ()
+  labels: Sequence[interface.Annotation] = ()
 
   def _make_label_button(self, button_label: str) -> ipywidgets.Button:
     """Create an ipywidget button for the given label."""
@@ -231,7 +232,7 @@ class EmbeddingDisplay:
       print(f'score        : {(self.score):.2f}')
     if show_labels:
       for lbl in self.labels:
-        print(f'\t{lbl.label}: {lbl.type.value}')
+        print(f'\t{lbl.label}: {lbl.label_type.value}')
 
     # Display widgets
     grid = ipywidgets.GridspecLayout(
@@ -246,7 +247,7 @@ class EmbeddingDisplay:
       grid[row, col] = button
     ipy_display(grid)
 
-  def harvest_labels(self, provenance: str) -> Sequence[interface.Label]:
+  def harvest_labels(self, provenance: str) -> Sequence[interface.Annotation]:
     """Get the labels for this example."""
     labels = []
     for lbl, w in self.widgets.items():
@@ -259,10 +260,11 @@ class EmbeddingDisplay:
       else:
         raise ValueError(f'Unexpected button value: {w.value}')
       labels.append(
-          interface.Label(
-              embedding_id=self.embedding_id,
+          interface.Annotation(
+              id=-1,
+              window_id=self.window_id,
               label=lbl,
-              type=lbl_type,
+              label_type=lbl_type,
               provenance=provenance,
           )
       )
@@ -306,20 +308,25 @@ class EmbeddingDisplayGroup:
     """Create an EmbeddingDisplayGroup from a Hoplite TopKSearchResults object."""
     members = []
     for result in results:
-      source = db.get_embedding_source(result.embedding_id)
-      labels = db.get_labels(embedding_id=result.embedding_id)
-      if [l for l in labels if l.label in filter_labels]:
+      window_id = int(result.window_id)
+      embedding = db.get_window(window_id)
+      recording = db.get_recording(embedding.recording_id)
+      deployment = db.get_deployment(recording.deployment_id)
+      annotations = db.get_all_annotations(
+          filter=config_dict.create(eq=dict(window_id=window_id))
+      )
+      if [a for a in annotations if a.label in filter_labels]:
         continue
       members.append(
           EmbeddingDisplay(
-              embedding_id=result.embedding_id,
-              dataset_name=source.dataset_name,
-              uri=source.source_id,
-              offset_s=source.offsets[0],
+              window_id=window_id,
+              dataset_name=deployment.project,
+              uri=recording.filename,
+              offset_s=embedding.offsets[0],
               score=result.sort_score,
               sample_rate_hz=sample_rate_hz,
               frame_rate=frame_rate,
-              labels=labels,
+              labels=annotations,
           )
       )
     return cls.create(members=members, sample_rate_hz=sample_rate_hz, **kwargs)
@@ -416,7 +423,7 @@ class EmbeddingDisplayGroup:
       ipy_display(prev_page_button)
       ipy_display(next_page_button)
 
-  def harvest_labels(self, provenance) -> Sequence[interface.Label]:
+  def harvest_labels(self, provenance) -> Sequence[interface.Annotation]:
     labels = []
     for member in self.members:
       labels.extend(member.harvest_labels(provenance))

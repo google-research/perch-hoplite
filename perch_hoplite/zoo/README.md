@@ -7,8 +7,12 @@ of models for evaluation purposes, and also allows users to freely choose the
 most appropriate model for their work.
 
 The most convenient way to load a predefined model is like so:
-```m = model_configs.load_model_by_name('perch_8')```
-which loads the Perch v8 model automatically from Kaggle Models. The set of
+
+```python
+m = model_configs.load_model_by_name('perch_v2')
+```
+
+which loads the Perch v2 model automatically from Kaggle Models. The set of
 currently implemented models can be inspected in
 `model_configs.ModelConfigName`.
 

@@ -49,7 +49,7 @@ class AgileConfigs:
 def load_configs(
     audio_sources: source_info.AudioSources,
     db_path: str | None = None,
-    model_config_key: str = 'perch_8',
+    model_config_key: str = 'perch_v2',
     db_key: str = 'sqlite_usearch',
 ) -> AgileConfigs:
   """Load default configs for the notebook and return them as an AgileConfigs.

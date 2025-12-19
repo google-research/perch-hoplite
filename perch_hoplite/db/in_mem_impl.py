@@ -13,206 +13,550 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""In-Memory implementation of HopliteDBInterface for testing."""
+"""In-memory database implementation."""
 
 import collections
+from collections.abc import Sequence
+import copy
 import dataclasses
-from typing import Any, Sequence
+import datetime as dt
+import itertools
+from typing import Any
 
 from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.db import interface
 
 
-@dataclasses.dataclass
-class InMemoryGraphSearchDB(interface.HopliteDBInterface):
-  """Graph search database backed by NumPy arrays.
+def select_matching_keys(
+    kv: dict[int, Any],
+    filter_dict: config_dict.ConfigDict | None = None,
+) -> set[int]:
+  """Select the keys from a dictionary whose values match the given constraints.
 
-  We add embeddings to a fixed-sized array, keeping track of which indices are
-  occupied. This avoids copies and resizing of the embeddings table.
+  Args:
+    kv: The dictionary to verify against the constraints.
+    filter_dict: An optional ConfigDict of constraints to verify.
+
+  Returns:
+    The keys of the matching items.
   """
 
-  embedding_dim: int
-  max_size: int
-  embeddings: np.ndarray
-  embedding_sources: dict[int, interface.EmbeddingSource] = dataclasses.field(
-      default_factory=dict
-  )
-  embedding_ids: set[int] = dataclasses.field(default_factory=set)
-  embedding_dtype: type[Any] = np.float16
-  labels: dict[int, list[interface.Label]] = dataclasses.field(
-      default_factory=lambda: collections.defaultdict(list)
-  )
-  kv_store: dict[str, config_dict.ConfigDict] = dataclasses.field(
-      default_factory=dict
-  )
+  if not filter_dict:
+    return set(kv.keys())
 
-  @classmethod
-  def create(cls, **kwargs):
-    """Connect to and, if needed, initialize the database."""
-    if 'embeddings' in kwargs:
-      db = cls(**kwargs)
-      return db
+  supported_ops = {
+      'eq',
+      'neq',
+      'lt',
+      'lte',
+      'gt',
+      'gte',
+      'isin',
+      'notin',
+      'range',
+  }
+  for op_name, op_filters in filter_dict.items():
+    if op_name not in supported_ops:
+      raise ValueError(
+          f'Unsupported operation: `{op_name}`. Supported filtering operations'
+          f' are: {supported_ops}.'
+      )
+    if not isinstance(op_filters, config_dict.ConfigDict):
+      raise ValueError(f'`{op_name}` value must be a ConfigDict.')
 
-    embeddings = np.zeros(
-        [kwargs['max_size'], kwargs['embedding_dim']],
-        dtype=kwargs.get('embedding_dtype', np.float16),
-    )
-    db = cls(embeddings=embeddings, **kwargs)
-    return db
+  def _is_match(obj: Any) -> bool:
+    for op_name, op_filters in filter_dict.items():
+      for key, value in op_filters.items():
+        attr = getattr(obj, key, None)
 
-  def thread_split(self) -> interface.HopliteDBInterface:
-    """Return a readable instance of the database."""
-    # Since numpy arrays are in shared memory, we can reuse the same object.
-    return self
+        if op_name == 'eq':
+          if attr is None:
+            if value is not None:
+              return False
+          else:
+            if isinstance(attr, np.ndarray):
+              if (attr != value).any():
+                return False
+            else:
+              if attr != value:
+                return False
+        elif op_name == 'neq':
+          if attr is None:
+            if value is None:
+              return False
+          else:
+            if isinstance(attr, np.ndarray):
+              if (attr != value).all():
+                return False
+            else:
+              if attr == value:
+                return False
+        elif op_name == 'lt':
+          if attr is None or value is None:
+            return False
+          else:
+            if attr >= value:
+              return False
+        elif op_name == 'lte':
+          if attr is None or value is None:
+            return False
+          else:
+            if attr > value:
+              return False
+        elif op_name == 'gt':
+          if attr is None or value is None:
+            return False
+          else:
+            if attr <= value:
+              return False
+        elif op_name == 'gte':
+          if attr is None or value is None:
+            return False
+          else:
+            if attr < value:
+              return False
+        elif op_name == 'isin':
+          if not isinstance(value, list):
+            raise ValueError(f'`{op_name}` value must be a list.')
+          if attr not in value:
+            return False
+        elif op_name == 'notin':
+          if not isinstance(value, list):
+            raise ValueError(f'`{op_name}` value must be a list.')
+          if attr in value:
+            return False
+        elif op_name == 'range':
+          if not isinstance(value, list) or len(value) != 2:
+            raise ValueError(f'`{op_name}` value must be a list of 2 elements.')
+          if attr is None:
+            return False
+          if attr < value[0] or attr > value[1]:
+            return False
 
-  def count_embeddings(self) -> int:
-    """Return a count of all embeddings in the database."""
-    return len(self.embedding_ids)
-
-  def insert_metadata(self, key: str, value: config_dict.ConfigDict) -> None:
-    self.kv_store[key] = value
-
-  def get_metadata(self, key: str | None) -> config_dict.ConfigDict:
-    if key is None:
-      return config_dict.ConfigDict(self.kv_store)
-    return self.kv_store[key]
-
-  def get_dataset_names(self) -> Sequence[str]:
-    """Get all dataset names in the database."""
-    ds_names = set()
-    for source in self.embedding_sources.values():
-      ds_names.add(source.dataset_name)
-    return tuple(ds_names)
-
-  def embedding_dimension(self) -> int:
-    return self.embedding_dim
-
-  def insert_embedding(
-      self, embedding: np.ndarray, source: interface.EmbeddingSource
-  ) -> int:
-    """Add an embedding to the database."""
-    if len(self.embedding_ids) >= self.max_size:
-      # TODO(tomdenton): Automatically resize instead of throwing an error.
-      raise ValueError('No more space in predefined memory.')
-
-    if len(self.embedding_ids) not in self.embedding_ids:
-      idx = len(self.embedding_ids)
-    else:
-      # find an unused index...
-      idx = None
-      for candidate in range(self.max_size):
-        if candidate not in self.embedding_ids:
-          idx = candidate
-      if not idx:
-        raise ValueError('Could not find an unused index.')
-
-    self.embedding_ids.add(idx)
-    self.embeddings[idx] = embedding[np.newaxis, :]
-    self.embedding_sources[idx] = source
-    return idx
-
-  def get_embedding(self, embedding_id: int) -> np.ndarray:
-    """Retrieve an embedding from the database."""
-    return self.embeddings[embedding_id]
-
-  def get_embedding_source(
-      self, embedding_id: int
-  ) -> interface.EmbeddingSource:
-    return self.embedding_sources[embedding_id]
-
-  def get_embeddings(
-      self, embedding_ids: np.ndarray
-  ) -> tuple[np.ndarray, np.ndarray]:
-    return embedding_ids, self.embeddings[embedding_ids]
-
-  def get_embedding_ids(self) -> np.ndarray:
-    """Get all embedding IDs in the database."""
-    return np.array(tuple(int(id_) for id_ in self.embedding_ids))
-
-  def get_one_embedding_id(self) -> int:
-    return next(iter(self.embedding_ids))
-
-  def get_embeddings_by_source(
-      self,
-      dataset_name: str,
-      source_id: str | None,
-      offsets: np.ndarray | None = None,
-  ) -> np.ndarray:
-    found_idxes = set()
-    for idx, embedding_source in self.embedding_sources.items():
-      if dataset_name and dataset_name != embedding_source.dataset_name:
-        continue
-      if source_id is not None and source_id != embedding_source.source_id:
-        continue
-      if offsets is not None and not np.array_equal(
-          offsets, embedding_source.offsets
-      ):
-        continue
-      found_idxes.add(idx)
-    return np.array(tuple(found_idxes), np.int64)
-
-  def commit(self) -> None:
-    """Commit any pending transactions to the database."""
-    pass
-
-  def insert_label(
-      self, label: interface.Label, skip_duplicates: bool = False
-  ) -> bool:
-    if label.type is None:
-      raise ValueError('label type must be set')
-    if label.provenance is None:
-      raise ValueError('label source must be set')
-    if skip_duplicates and label in self.get_labels(label.embedding_id):
-      return False
-
-    self.labels[label.embedding_id].append(label)
     return True
 
-  def get_embeddings_by_label(
+  return {key for key, value in kv.items() if _is_match(value)}
+
+
+@dataclasses.dataclass
+class InMemoryGraphSearchDB(interface.HopliteDBInterface):
+  """In-memory hoplite database."""
+
+  # User-provided.
+  _embedding_dim: int
+  _embedding_dtype: type[Any]
+
+  # Dynamic state.
+  _extra_table_columns: dict[str, dict[str, type[Any]]] = dataclasses.field(
+      default_factory=lambda: {
+          'deployments': {},
+          'recordings': {},
+          'windows': {},
+          'annotations': {},
+      }
+  )
+
+  # Storage for metadata & embeddings.
+  _hoplite_metadata: dict[str, config_dict.ConfigDict] = dataclasses.field(
+      default_factory=dict
+  )
+  _deployments: dict[int, interface.Deployment] = dataclasses.field(
+      default_factory=dict
+  )
+  _recordings: dict[int, interface.Recording] = dataclasses.field(
+      default_factory=dict
+  )
+  _windows: dict[int, interface.Window] = dataclasses.field(
+      default_factory=dict
+  )
+  _annotations: dict[int, interface.Annotation] = dataclasses.field(
+      default_factory=dict
+  )
+  _next_deployment_id: int = 1
+  _next_recording_id: int = 1
+  _next_window_id: int = 1
+  _next_annotation_id: int = 1
+
+  @classmethod
+  def create(
+      cls,
+      embedding_dim: int,
+      embedding_dtype: type[Any] = np.float16,
+  ) -> 'InMemoryGraphSearchDB':
+    """Connect to and, if needed, initialize the database."""
+    return cls(
+        _embedding_dim=embedding_dim,
+        _embedding_dtype=embedding_dtype,
+    )
+
+  def add_extra_table_column(
       self,
+      table_name: str,
+      column_name: str,
+      column_type: type[Any],
+  ) -> None:
+    """Add an extra column to a table in the database.."""
+    self._extra_table_columns[table_name][column_name] = column_type
+
+  def get_extra_table_columns(self) -> dict[str, dict[str, type[Any]]]:
+    """Get all extra columns in the database."""
+    return self._extra_table_columns
+
+  def commit(self) -> None:
+    """No-op to commit any pending transactions to the database.."""
+    pass
+
+  def thread_split(self) -> 'InMemoryGraphSearchDB':
+    """Return the same database object since all data is in shared memory."""
+    return self
+
+  def insert_metadata(self, key: str, value: config_dict.ConfigDict) -> None:
+    """Insert a key-value pair into the metadata table."""
+    self._hoplite_metadata[key] = value
+
+  def get_metadata(self, key: str | None) -> config_dict.ConfigDict:
+    """Get a key-value pair from the metadata table."""
+
+    if key is None:
+      return config_dict.ConfigDict(self._hoplite_metadata)
+    else:
+      return self._hoplite_metadata[key]
+
+  def remove_metadata(self, key: str | None) -> None:
+    """Remove a key-value pair from the metadata table."""
+
+    if key is None:
+      self._hoplite_metadata.clear()
+    else:
+      del self._hoplite_metadata[key]
+
+  def insert_deployment(
+      self,
+      name: str,
+      project: str,
+      latitude: float | None = None,
+      longitude: float | None = None,
+      **kwargs: Any,
+  ) -> int:
+    """Insert a deployment into the database."""
+
+    deployment_id = self._next_deployment_id
+    self._deployments[deployment_id] = interface.Deployment(
+        id=deployment_id,
+        name=name,
+        project=project,
+        latitude=latitude,
+        longitude=longitude,
+        **kwargs,
+    )
+    self._next_deployment_id += 1
+    return deployment_id
+
+  def get_deployment(self, deployment_id: int) -> interface.Deployment:
+    """Get a deployment from the database."""
+    return self._deployments[deployment_id]
+
+  def remove_deployment(self, deployment_id: int) -> None:
+    """Remove a deployment from the database."""
+
+    remove_recording_ids = [
+        recording.id
+        for recording in self._recordings.values()
+        if recording.deployment_id == deployment_id
+    ]
+    for recording_id in remove_recording_ids:
+      self.remove_recording(recording_id)
+    del self._deployments[deployment_id]
+
+  def insert_recording(
+      self,
+      filename: str,
+      datetime: dt.datetime | None = None,
+      deployment_id: int | None = None,
+      **kwargs: Any,
+  ) -> int:
+    """Insert a recording into the database."""
+
+    recording_id = self._next_recording_id
+    self._recordings[recording_id] = interface.Recording(
+        id=recording_id,
+        filename=filename,
+        datetime=datetime,
+        deployment_id=deployment_id,
+        **kwargs,
+    )
+    self._next_recording_id += 1
+    return recording_id
+
+  def get_recording(self, recording_id: int) -> interface.Recording:
+    """Get a recording from the database."""
+    return self._recordings[recording_id]
+
+  def remove_recording(self, recording_id: int) -> None:
+    """Remove a recording from the database."""
+
+    remove_window_ids = [
+        window.id
+        for window in self._windows.values()
+        if window.recording_id == recording_id
+    ]
+    for window_id in remove_window_ids:
+      self.remove_window(window_id)
+    del self._recordings[recording_id]
+
+  def insert_window(
+      self,
+      recording_id: int,
+      offsets: np.ndarray,
+      embedding: np.ndarray | None = None,
+      **kwargs: Any,
+  ) -> int:
+    """Insert a window into the database."""
+
+    if recording_id not in self._recordings:
+      raise ValueError(f'Recording id not found: {recording_id}')
+
+    window_id = self._next_window_id
+    self._windows[window_id] = interface.Window(
+        id=window_id,
+        recording_id=recording_id,
+        offsets=offsets,
+        embedding=embedding,
+        **kwargs,
+    )
+    self._next_window_id += 1
+    return window_id
+
+  def get_window(
+      self,
+      window_id: int,
+      include_embedding: bool = False,
+  ) -> interface.Window:
+    """Get a window from the database."""
+
+    window = self._windows[window_id]
+
+    if include_embedding:
+      return window
+
+    window = copy.copy(window)
+    window.embedding = None
+    return window
+
+  def get_embedding(self, window_id: int) -> np.ndarray:
+    """Get an embedding vector from the database."""
+    return self._windows[window_id].embedding
+
+  def remove_window(self, window_id: int) -> None:
+    """Remove a window from the database."""
+
+    remove_annotation_ids = [
+        annotation.id
+        for annotation in self._annotations.values()
+        if annotation.window_id == window_id
+    ]
+    for annotation_id in remove_annotation_ids:
+      self.remove_annotation(annotation_id)
+    del self._windows[window_id]
+
+  def insert_annotation(
+      self,
+      window_id: int,
       label: str,
-      label_type: interface.LabelType | None = interface.LabelType.POSITIVE,
-      provenance: str | None = None,
-  ) -> np.ndarray:
-    found_idxes = set()
-    for idx, emb_labels in self.labels.items():
-      for emb_label in emb_labels:
-        if emb_label.label != label:
-          continue
-        if label_type is not None and emb_label.type.value != label_type.value:
-          continue
-        if provenance is not None and emb_label.provenance != provenance:
-          continue
-        found_idxes.add(idx)
-    return np.array(tuple(found_idxes), np.int64)
+      label_type: interface.LabelType,
+      provenance: str,
+      skip_duplicates: bool = False,
+      **kwargs: Any,
+  ) -> int:
+    """Insert an annotation into the database."""
 
-  def get_labels(self, embedding_id: int) -> Sequence[interface.Label]:
-    return self.labels[embedding_id]
+    if window_id not in self._windows:
+      raise ValueError(f'Window id not found: {window_id}')
 
-  def get_classes(self) -> Sequence[str]:
-    label_set = set()
-    for labels in self.labels.values():
-      for l in labels:
-        label_set.add(l.label)
-    return tuple(sorted(label_set))
+    if skip_duplicates:
+      matches = self.get_all_annotations(
+          config_dict.create(
+              eq=dict(window_id=window_id, label=label, label_type=label_type)
+          )
+      )
+      if matches:
+        return matches[0].id
 
-  def get_class_counts(
-      self, label_type: interface.LabelType = interface.LabelType.POSITIVE
-  ) -> dict[str, int]:
-    class_counts = collections.defaultdict(int)
-    for labels in self.labels.values():
-      counted_labels = set()
-      for l in labels:
-        # Avoid double-counting the same label on the same embedding because of
-        # different provenances.
-        if l.label in counted_labels:
-          continue
-        if l.type.value == label_type.value:
-          class_counts[l.label] += 1
-          counted_labels.add(l.label)
-        else:
-          # Creates a key in the dict for all labels, even if they have no
-          # matching type counts.
-          class_counts[l.label] += 0
-    return class_counts
+    annotation_id = self._next_annotation_id
+    self._annotations[annotation_id] = interface.Annotation(
+        id=annotation_id,
+        window_id=window_id,
+        label=label,
+        label_type=label_type,
+        provenance=provenance,
+        **kwargs,
+    )
+    self._next_annotation_id += 1
+    return annotation_id
+
+  def get_annotation(self, annotation_id: int) -> interface.Annotation:
+    """Get an annotation from the database."""
+    return self._annotations[annotation_id]
+
+  def remove_annotation(self, annotation_id: int) -> None:
+    """Remove an annotation from the database."""
+    del self._annotations[annotation_id]
+
+  def count_embeddings(self) -> int:
+    """Get the number of embeddings in the database."""
+    return len(self._windows)
+
+  def match_window_ids(
+      self,
+      deployments_filter: config_dict.ConfigDict | None = None,
+      recordings_filter: config_dict.ConfigDict | None = None,
+      windows_filter: config_dict.ConfigDict | None = None,
+      annotations_filter: config_dict.ConfigDict | None = None,
+      limit: int | None = None,
+  ) -> Sequence[int]:
+    """Get matching window IDs from the database based on given filters."""
+
+    if limit is not None and limit <= 0:
+      raise ValueError('Limit must be None or positive.')
+
+    # Filter by deployment constraints.
+    if deployments_filter:
+      restrict_deployments = select_matching_keys(
+          self._deployments,
+          deployments_filter,
+      )
+    else:
+      restrict_deployments = None
+
+    # Filter by recording constraints.
+    if recordings_filter or restrict_deployments is not None:
+      if recordings_filter:
+        restrict_recordings = select_matching_keys(
+            self._recordings,
+            recordings_filter,
+        )
+      else:
+        restrict_recordings = set(self._recordings.keys())
+      if restrict_deployments is not None:
+        restrict_recordings &= {
+            key
+            for key, value in self._recordings.items()
+            if value.deployment_id in restrict_deployments
+        }
+    else:
+      restrict_recordings = None
+
+    # Filter by window constraints.
+    if windows_filter or restrict_recordings is not None:
+      if windows_filter:
+        restrict_windows = select_matching_keys(
+            self._windows,
+            windows_filter,
+        )
+      else:
+        restrict_windows = set(self._windows.keys())
+      if restrict_recordings is not None:
+        restrict_windows &= {
+            key
+            for key, value in self._windows.items()
+            if value.recording_id in restrict_recordings
+        }
+    else:
+      restrict_windows = set(self._windows.keys())
+
+    # Filter by annotation constraints.
+    if annotations_filter:
+      restrict_annotations = select_matching_keys(
+          self._annotations,
+          annotations_filter,
+      )
+      restrict_windows &= {
+          self._annotations[annotation_id].window_id
+          for annotation_id in restrict_annotations
+      }
+
+    # Return the window IDs that match the constraints.
+    if limit is None:
+      return list(restrict_windows)
+    return list(itertools.islice(restrict_windows, limit))
+
+  def get_all_projects(self) -> Sequence[str]:
+    """Get all distinct projects from the database."""
+    return sorted({d.project for d in self._deployments.values()})
+
+  def get_all_deployments(
+      self,
+      filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
+  ) -> Sequence[interface.Deployment]:
+    """Get all deployments from the database."""
+    restrict_deployments = select_matching_keys(self._deployments, filter)
+    return [self._deployments[key] for key in restrict_deployments]
+
+  def get_all_recordings(
+      self,
+      filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
+  ) -> Sequence[interface.Recording]:
+    """Get all recordings from the database."""
+    restrict_recordings = select_matching_keys(self._recordings, filter)
+    return [self._recordings[key] for key in restrict_recordings]
+
+  def get_all_windows(
+      self,
+      include_embedding: bool = False,
+      filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
+  ) -> Sequence[interface.Window]:
+    """Get all windows from the database."""
+
+    restrict_windows = select_matching_keys(self._windows, filter)
+    windows = [self._windows[key] for key in restrict_windows]
+
+    if include_embedding:
+      return windows
+
+    windows = [copy.copy(window) for window in windows]
+    for window in windows:
+      window.embedding = None
+    return windows
+
+  def get_all_annotations(
+      self,
+      filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
+  ) -> Sequence[interface.Annotation]:
+    """Get all annotations from the database."""
+    restrict_annotations = select_matching_keys(self._annotations, filter)
+    return [self._annotations[key] for key in restrict_annotations]
+
+  def get_all_labels(
+      self,
+      label_type: interface.LabelType | None = None,
+  ) -> Sequence[str]:
+    """Get all distinct labels from the database."""
+    return sorted({
+        a.label
+        for a in self._annotations.values()
+        if label_type is None or a.label_type == label_type
+    })
+
+  def count_each_label(
+      self,
+      label_type: interface.LabelType | None = None,
+  ) -> collections.Counter[str]:
+    """Count each label in the database, ignoring provenance."""
+
+    # Avoid double-counting the same label on the same window because of
+    # different provenances.
+    unique_annotations = {
+        (a.window_id, a.label, a.label_type)
+        for a in self._annotations.values()
+        if label_type is None or a.label_type == label_type
+    }
+    return collections.Counter([a[1] for a in unique_annotations])
+
+  def get_embedding_dim(self) -> int:
+    """Get the embedding dimension."""
+    return self._embedding_dim
+
+  def get_embedding_dtype(self) -> type[Any]:
+    """Get the embedding data type."""
+    return self._embedding_dtype

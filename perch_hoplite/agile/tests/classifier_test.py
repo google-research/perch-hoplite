@@ -129,7 +129,7 @@ class ClassifierTest(absltest.TestCase):
     classy.beta_bias = 0.0
     csv_filepath = os.path.join(self.tempdir, 'inference.csv')
     classifier.write_inference_csv(
-        embedding_ids=db.get_embedding_ids(),
+        window_ids=np.array(db.match_window_ids()),
         linear_classifier=classy,
         db=db,
         output_filepath=csv_filepath,

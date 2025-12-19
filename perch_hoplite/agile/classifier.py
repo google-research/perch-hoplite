@@ -16,10 +16,12 @@
 """Functions for training and applying a linear classifier."""
 
 import base64
+from collections.abc import Iterator, Sequence
 from concurrent import futures
+import csv
 import dataclasses
 import json
-from typing import Any, Iterator, Sequence
+from typing import Any
 
 from etils import epath
 from ml_collections import config_dict
@@ -174,7 +176,7 @@ def train_linear_classifier(
     loss: str = 'bce',
 ) -> tuple[LinearClassifier, dict[str, float]]:
   """Train a linear classifier."""
-  embedding_dim = data_manager.db.embedding_dimension()
+  embedding_dim = data_manager.db.get_embedding_dim()
   num_classes = len(data_manager.get_target_labels())
   lin_model = get_linear_model(embedding_dim, num_classes)
   optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
@@ -257,45 +259,50 @@ def csv_worker_initializer(state: CsvWorkerState):
   """Initialize the CSV worker."""
   state.get_thread_db()
   with epath.Path(state.csv_filepath).open('w') as f:
-    f.write('idx,dataset_name,source_id,offset,label,logits\n')
+    f.write('idx,project,filename,window_start,window_end,label,logits\n')
 
 
 def csv_worker_fn(
-    embedding_ids: np.ndarray, logits: np.ndarray, state: CsvWorkerState
+    window_ids: np.ndarray, logits: np.ndarray, state: CsvWorkerState
 ) -> None:
   """Writes a CSV row for each detection.
 
   Args:
-    embedding_ids: The embedding ids to write.
-    logits: The logits for each embedding id.
+    window_ids: The window ids to write.
+    logits: The logits for each window id.
     state: The state of the worker.
   """
   db = state.get_thread_db()
   with epath.Path(state.csv_filepath).open('a') as f:
-    for idx, logit in zip(embedding_ids, logits):
-      source = db.get_embedding_source(idx)
+    csv_writer = csv.writer(f)
+    for idx, logit in zip(window_ids, logits):
+      window = db.get_window(int(idx))
+      recording = db.get_recording(window.recording_id)
+      deployment = db.get_deployment(recording.deployment_id)
       for a in np.argwhere(logit > state.threshold):
         lbl = state.labels[a[0]]
         row = [
             idx,
-            source.dataset_name,
-            source.source_id,
-            source.offsets[0],
+            deployment.project,
+            recording.filename,
+            window.offsets[0],
+            window.offsets[1],
             lbl,
             logit[a][0],
         ]
-        f.write(','.join(map(str, row)) + '\n')
+        row = [str(x) for x in row]
+        csv_writer.writerow(row)
 
 
 def batched_embedding_iterator(
     db: db_interface.HopliteDBInterface,
-    embedding_ids: np.ndarray,
+    window_ids: np.ndarray,
     batch_size: int = 1024,
 ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
   """Iterate over embeddings in batches."""
-  for q in range(0, len(embedding_ids), batch_size):
-    batch_ids = embedding_ids[q : q + batch_size]
-    batch_ids, batch_embs = db.get_embeddings(batch_ids)
+  for q in range(0, len(window_ids), batch_size):
+    batch_ids = window_ids[q : q + batch_size]
+    batch_embs = db.get_embeddings_batch(batch_ids)
     yield batch_ids, batch_embs
 
 
@@ -305,11 +312,13 @@ def write_inference_csv(
     output_filepath: str,
     threshold: float,
     labels: Sequence[str] | None = None,
-    embedding_ids: np.ndarray | None = None,
+    window_ids: np.ndarray | Sequence[int] | None = None,
 ) -> None:
   """Write a CSV for all audio windows with logits above a threshold."""
-  if embedding_ids is None:
-    embedding_ids = db.get_embedding_ids()
+  if window_ids is None:
+    window_ids = np.array(db.match_window_ids())
+  elif not isinstance(window_ids, np.ndarray):
+    window_ids = np.array(window_ids)
   if labels is None:
     labels = linear_classifier.classes
   else:
@@ -326,7 +335,7 @@ def write_inference_csv(
       labels=labels,
       threshold=threshold,
   )
-  emb_iter = batched_embedding_iterator(db, embedding_ids, batch_size=1024)
+  emb_iter = batched_embedding_iterator(db, window_ids, batch_size=1024)
   with futures.ThreadPoolExecutor(
       max_workers=1,
       initializer=csv_worker_initializer,

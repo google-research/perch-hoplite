@@ -80,16 +80,19 @@ class IngestAnnotationsTest(absltest.TestCase):
         rng=rng,
         fill_random=False,
     )
+    deployment_id = db.insert_deployment(name='hawaii', project='hawaii')
+    recording_id = db.insert_recording(
+        filename='UHH_001_S01_20161121_150000.flac',
+        deployment_id=deployment_id,
+    )
+    window_size_s = 5.0
     emb_offsets = [175, 185, 275, 230, 235]
     emb_idxes = []
     for offset in emb_offsets:
-      emb_idx = db.insert_embedding(
-          embedding=rng.normal([db.embedding_dimension()]),
-          source=interface.EmbeddingSource(
-              dataset_name='hawaii',
-              source_id='UHH_001_S01_20161121_150000.flac',
-              offsets=np.array([offset]),
-          ),
+      emb_idx = db.insert_window(
+          recording_id=recording_id,
+          offsets=np.array([offset, offset + window_size_s], np.float32),
+          embedding=rng.normal([db.get_embedding_dim()]),
       )
       emb_idxes.append(emb_idx)
 
@@ -103,35 +106,47 @@ class IngestAnnotationsTest(absltest.TestCase):
         annotation_filename='hawaii.csv',
         annotation_load_fn=annotations_fns.load_cornell_annotations,
     )
-    inserted_labels = ingestor.ingest_dataset(
-        db, window_size_s=5.0, provenance='test_dataset'
-    )
+    inserted_labels = ingestor.ingest_dataset(db, provenance='test_dataset')
     self.assertSetEqual(
         set(inserted_labels.keys()), {'jabwar', 'hawama', 'ercfra'}
     )
     # Check that individual labels are correctly applied.
     # The Hawai'i test data CSV contains a total of five annotations.
     # The window at offset 175 should have no labels.
-    self.assertEmpty(db.get_labels(emb_idxes[0]))  # offset 175
+    self.assertEmpty(
+        db.get_all_annotations(
+            config_dict.create(eq=dict(window_id=emb_idxes[0]))
+        )
+    )  # offset 175
 
     def _check_label(want_label_str, got_label):
       self.assertEqual(got_label.label, want_label_str)
-      self.assertEqual(got_label.type, interface.LabelType.POSITIVE)
+      self.assertEqual(got_label.label_type, interface.LabelType.POSITIVE)
       self.assertEqual(got_label.provenance, 'test_dataset')
 
     # There are two jabwar annotations for the window at offset 185.
-    offset_185_labels = db.get_labels(emb_idxes[1])
+    offset_185_labels = db.get_all_annotations(
+        config_dict.create(eq=dict(window_id=emb_idxes[1]))
+    )
     self.assertLen(offset_185_labels, 2)
     _check_label('jabwar', offset_185_labels[0])
     _check_label('jabwar', offset_185_labels[1])
 
-    offset_275_labels = db.get_labels(emb_idxes[2])
+    offset_275_labels = db.get_all_annotations(
+        config_dict.create(eq=dict(window_id=emb_idxes[2]))
+    )
     self.assertLen(offset_275_labels, 1)
     _check_label('hawama', offset_275_labels[0])
 
-    self.assertEmpty(db.get_labels(emb_idxes[3]))  # offset 230
+    self.assertEmpty(
+        db.get_all_annotations(
+            config_dict.create(eq=dict(window_id=emb_idxes[3]))
+        )
+    )  # offset 230
 
-    offset_235_labels = db.get_labels(emb_idxes[4])
+    offset_235_labels = db.get_all_annotations(
+        config_dict.create(eq=dict(window_id=emb_idxes[4]))
+    )
     self.assertLen(offset_235_labels, 1)
     _check_label('ercfra', offset_235_labels[0])
 
@@ -165,8 +180,8 @@ class IngestAnnotationsTest(absltest.TestCase):
     )
     self.assertEqual(db.count_embeddings(), 60 * 9)
 
-    ingestor.ingest_dataset(db, window_size_s=1.0)
-    class_counts = db.get_class_counts()
+    ingestor.ingest_dataset(db)
+    class_counts = db.count_each_label()
     for lbl in ('x', 'y', 'z'):
       self.assertEqual(class_counts[lbl], 9)
       self.assertEqual(ingestor_class_counts[lbl], 9)

@@ -26,7 +26,7 @@ import tqdm
 
 
 @dataclasses.dataclass
-class DBConfig(interface.EmbeddingMetadata):
+class DBConfig(interface.HopliteConfig):
   """Configuration for embedding database.
 
   Attributes:
@@ -40,7 +40,7 @@ class DBConfig(interface.EmbeddingMetadata):
   def load_db(self) -> interface.HopliteDBInterface:
     """Load the database from the specified path."""
     if self.db_key == 'sqlite_usearch':
-      return sqlite_usearch_impl.SQLiteUsearchDB.create(**self.db_config)
+      return sqlite_usearch_impl.SQLiteUSearchDB.create(**self.db_config)
     elif self.db_key == 'in_mem':
       return in_mem_impl.InMemoryGraphSearchDB.create(**self.db_config)
     else:
@@ -58,31 +58,45 @@ def duplicate_db(
 
   # Check that the target_db is empty. If not, we'll have to do something more
   # sophisticated.
-  if target_db.get_embedding_ids().shape[0] > 0:
+  if target_db.count_embeddings():
     raise ValueError('Target DB is not empty.')
 
-  # Clone the embeddings and get the id mapping.
-  # This automatically and seamlessly clones the source info as a
-  # side effect.
-  emb_id_mapping = {}
-  for idx in tqdm.tqdm(source_db.get_embedding_ids()):
-    emb = source_db.get_embedding(idx)
-    source = source_db.get_embedding_source(idx)
-    target_id = target_db.insert_embedding(emb, source)
-    emb_id_mapping[idx] = target_id
-
+  # Clone deployments and keep a map between source and target ids.
+  deployment_id_mapping = {None: None}
+  for deployment in tqdm.tqdm(source_db.get_all_deployments()):
+    target_id = target_db.insert_deployment(**deployment.to_kwargs(skip=['id']))
+    deployment_id_mapping[deployment.id] = target_id
   target_db.commit()
 
-  # Clone labels.
-  for idx, target_idx in tqdm.tqdm(emb_id_mapping.items()):
-    for lbl in source_db.get_labels(idx):
-      target_label = interface.Label(
-          embedding_id=target_idx,
-          label=lbl.label,
-          provenance=lbl.provenance,
-          type=lbl.type,
-      )
-      target_db.insert_label(target_label)
+  # Clone recordings and keep a map between source and target ids.
+  recording_id_mapping = {}
+  for recording in tqdm.tqdm(source_db.get_all_recordings()):
+    target_id = target_db.insert_recording(
+        deployment_id=deployment_id_mapping[recording.deployment_id],
+        **recording.to_kwargs(skip=['id', 'deployment_id']),
+    )
+    recording_id_mapping[recording.id] = target_id
+  target_db.commit()
+
+  # Clone windows and keep a map between source and target ids.
+  window_id_mapping = {}
+  for window in tqdm.tqdm(source_db.get_all_windows()):
+    target_id = target_db.insert_window(
+        recording_id=recording_id_mapping[window.recording_id],
+        embedding=source_db.get_embedding(window.id),
+        **window.to_kwargs(skip=['id', 'embedding', 'recording_id']),
+    )
+    window_id_mapping[window.id] = target_id
+  target_db.commit()
+
+  # Clone annotations and keep a map between source and target ids.
+  annotation_id_mapping = {}
+  for annotation in tqdm.tqdm(source_db.get_all_annotations()):
+    target_id = target_db.insert_annotation(
+        window_id=window_id_mapping[annotation.window_id],
+        **annotation.to_kwargs(skip=['id', 'window_id']),
+    )
+    annotation_id_mapping[annotation.id] = target_id
   target_db.commit()
 
   # Clone the KV store, replacing the DBConfig only.
@@ -94,16 +108,16 @@ def duplicate_db(
   target_db.insert_metadata('db_config', target_db_config)
   target_db.commit()
 
-  return target_db, emb_id_mapping
+  return target_db, window_id_mapping
 
 
 def create_new_usearch_db(
     db_path: str,
     embedding_dim: int,
-) -> sqlite_usearch_impl.SQLiteUsearchDB:
-  """Create a new usearch DB with the given path and embedding dimension."""
+) -> sqlite_usearch_impl.SQLiteUSearchDB:
+  """Create a new USearch DB with the given path and embedding dimension."""
   epath.Path(db_path).parent.mkdir(parents=True, exist_ok=True)
   usearch_cfg = sqlite_usearch_impl.get_default_usearch_config(embedding_dim)
-  return sqlite_usearch_impl.SQLiteUsearchDB.create(
+  return sqlite_usearch_impl.SQLiteUSearchDB.create(
       db_path=db_path, usearch_cfg=usearch_cfg
   )

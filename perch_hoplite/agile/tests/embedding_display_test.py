@@ -96,7 +96,7 @@ class EmbeddingDisplayTest(absltest.TestCase):
 
   def test_embedding_display_button(self):
     disp = embedding_display.EmbeddingDisplay(
-        embedding_id=123,
+        window_id=123,
         dataset_name='test_dataset',
         uri='test_uri',
         offset_s=1.0,
@@ -123,14 +123,14 @@ class EmbeddingDisplayTest(absltest.TestCase):
     self.assertEqual(bar_button.value, 1)
     labels = disp.harvest_labels('test_provenance')
     self.assertLen(labels, 2)
-    self.assertEqual(labels[0].embedding_id, 123)
+    self.assertEqual(labels[0].window_id, 123)
     self.assertEqual(labels[0].label, 'foo')
-    self.assertEqual(labels[0].type, interface.LabelType.NEGATIVE)
+    self.assertEqual(labels[0].label_type, interface.LabelType.NEGATIVE)
     self.assertEqual(labels[0].provenance, 'test_provenance')
 
-    self.assertEqual(labels[1].embedding_id, 123)
+    self.assertEqual(labels[1].window_id, 123)
     self.assertEqual(labels[1].label, 'bar')
-    self.assertEqual(labels[1].type, interface.LabelType.POSITIVE)
+    self.assertEqual(labels[1].label_type, interface.LabelType.POSITIVE)
     self.assertEqual(labels[1].provenance, 'test_provenance')
 
     bar_button.click()
@@ -155,7 +155,7 @@ class EmbeddingDisplayTest(absltest.TestCase):
         sample_rate_hz=sample_rate_hz,
     )
     member0 = embedding_display.EmbeddingDisplay(
-        embedding_id=123,
+        window_id=123,
         dataset_name='test_dataset',
         uri=os.path.join('pos', 'foo_pos.wav'),
         offset_s=1.0,
@@ -163,7 +163,7 @@ class EmbeddingDisplayTest(absltest.TestCase):
         sample_rate_hz=sample_rate_hz,
     )
     member1 = embedding_display.EmbeddingDisplay(
-        embedding_id=456,
+        window_id=456,
         dataset_name='test_dataset',
         uri=os.path.join('neg', 'bar_neg.wav'),
         offset_s=2.0,
@@ -186,8 +186,8 @@ class EmbeddingDisplayTest(absltest.TestCase):
         audio_loader=filepath_audio_loader,
     )
     self.assertLen(group.members, 2)
-    self.assertEqual(group.members[0].embedding_id, 123)
-    self.assertEqual(group.members[1].embedding_id, 456)
+    self.assertEqual(group.members[0].window_id, 123)
+    self.assertEqual(group.members[1].window_id, 456)
     for got_member in group.iterator_with_audio():
       self.assertEqual(got_member.dataset_name, 'test_dataset')
       self.assertIsNotNone(got_member.audio)

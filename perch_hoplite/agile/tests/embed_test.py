@@ -58,7 +58,6 @@ class EmbedTest(absltest.TestCase):
 
     in_mem_db_config = config_dict.ConfigDict()
     in_mem_db_config.embedding_dim = 32
-    in_mem_db_config.max_size = 100
     db_config = db_loader.DBConfig(
         db_key='in_mem',
         db_config=in_mem_db_config,
@@ -85,7 +84,7 @@ class EmbedTest(absltest.TestCase):
       # The hop size is 1.0s and each file is 6.0s, so we get 6 embeddings
       # per file. There are six files, so we should get 36 embeddings.
       self.assertEqual(db.count_embeddings(), 36)
-      _, embs = db.get_embeddings(db.get_embedding_ids())
+      embs = db.get_embeddings_batch(db.match_window_ids())
       self.assertEqual(embs.shape[-1], 32)
 
       # Check that the metadata is set correctly.
@@ -97,7 +96,6 @@ class EmbedTest(absltest.TestCase):
       in_mem_db_config = config_dict.ConfigDict()
       # DB embedding dim needs to match the number of classes we will extract.
       in_mem_db_config.embedding_dim = 6
-      in_mem_db_config.max_size = 100
       db_config = db_loader.DBConfig(
           db_key='in_mem',
           db_config=in_mem_db_config,
@@ -116,7 +114,7 @@ class EmbedTest(absltest.TestCase):
       # The hop size is 1.0s and each file is 6.0s, so we get 6 embeddings
       # per file. There are six files, so we should get 36 embeddings.
       self.assertEqual(db.count_embeddings(), 36)
-      _, embs = db.get_embeddings(db.get_embedding_ids())
+      embs = db.get_embeddings_batch(db.match_window_ids())
       # The placeholder model defaults to 128-dim'l outputs, but we only want
       # the channels specified in the logits_idxes.
       self.assertEqual(embs.shape[-1], 6)

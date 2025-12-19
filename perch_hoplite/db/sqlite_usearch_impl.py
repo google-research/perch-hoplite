@@ -13,29 +13,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SQLite hoplite impliementation using usearch for vector storage."""
+"""SQLite database implementation using USearch for vector storage & search."""
 
 import collections
 from collections.abc import Sequence
 import dataclasses
-import functools
+import datetime as dt
+import itertools
 import json
+import re
 import sqlite3
 from typing import Any
 
+from absl import logging
 from etils import epath
 from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.db import interface
 from usearch import index as uindex
 
-
-USEARCH_CONFIG_KEY = 'usearch_config'
-EMBEDDINGS_TABLE = 'hoplite_embeddings'
-
 HOPLITE_FILENAME = 'hoplite.sqlite'
 UINDEX_FILENAME = 'usearch.index'
-
+USEARCH_CONFIG_KEY = 'usearch_config'
 USEARCH_DTYPES = {
     'float16': uindex.ScalarKind.F16,
 }
@@ -44,7 +43,7 @@ USEARCH_DTYPES = {
 def get_default_usearch_config(
     embedding_dim: int,
 ) -> config_dict.ConfigDict:
-  """Get a default usearch config for the given embedding dimension."""
+  """Get a default USearch config for the given embedding dimension."""
   usearch_cfg = config_dict.ConfigDict()
   usearch_cfg.embedding_dim = embedding_dim
   usearch_cfg.dtype = 'float16'
@@ -54,8 +53,182 @@ def get_default_usearch_config(
   return usearch_cfg
 
 
+def serialize_array(arr: np.ndarray, dtype: type[Any]) -> bytes:
+  return arr.astype(np.dtype(dtype).newbyteorder('<')).tobytes()
+
+
+def deserialize_array(serialized: bytes, dtype: type[Any]) -> np.ndarray:
+  return np.frombuffer(serialized, dtype=np.dtype(dtype).newbyteorder('<'))
+
+
+def is_valid_sql_identifier(name: str) -> bool:
+  """Check if a string is a valid and safe SQL identifier."""
+
+  if not name or not isinstance(name, str):
+    return False
+
+  # Regex to verify that the name starts with a letter or underscore, then
+  # follows with letters, numbers or underscores.
+  return re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name) is not None
+
+
+def normalize_sql_value(value: Any) -> Any:
+  """Normalize a python value to one of the types supported by SQL."""
+
+  if isinstance(value, list) or isinstance(value, tuple):
+    return [normalize_sql_value(v) for v in value]
+  if isinstance(value, interface.LabelType):
+    return value.value
+  elif isinstance(value, dt.datetime):
+    return value.isoformat()
+  elif isinstance(value, np.ndarray):
+    return serialize_array(value, np.float32)
+  elif isinstance(value, np.integer):
+    return int(value)
+  elif isinstance(value, np.floating):
+    return float(value)
+  return value
+
+
+def format_sql_insert_values(
+    **kwargs: Any,
+) -> tuple[str, str, list[Any]]:
+  """Build columns string, placeholders string and values list for SQL INSERT.
+
+  Args:
+    **kwargs: Key-value pairs to pass to the SQL statement.
+
+  Returns:
+    A tuple of: a formatted columns string, a formatted placeholders string, and
+    a list of corresponding values. Safe to be used in SQL INSERT statements.
+  """
+
+  for key in kwargs:
+    if not is_valid_sql_identifier(key):
+      raise ValueError(f'`{key}` is not a valid SQL identifier.')
+
+  columns = list(kwargs.keys())
+  placeholders = ['?'] * len(columns)
+  values = normalize_sql_value(list(kwargs.values()))
+
+  return f"({', '.join(columns)})", f"({', '.join(placeholders)})", values
+
+
+def format_sql_where_conditions(
+    filter_dict: config_dict.ConfigDict | None = None,
+    table_prefix: str | None = None,
+) -> tuple[str, list[Any]]:
+  r"""Build conditions string and values list for SQL WHERE from given filters.
+
+  Args:
+    filter_dict: A ConfigDict of constraints to build SQL conditions from.
+    table_prefix: An optional table prefix to prepend to each column name.
+
+  Returns:
+    A tuple of: a formatted string of AND-joined conditions, and a list of
+    corresponding values. Safe to be used in SQL WHERE statements.
+  """
+
+  if table_prefix and not is_valid_sql_identifier(table_prefix):
+    raise ValueError(
+        f'Table prefix `{table_prefix}` is not a valid SQL identifier.'
+    )
+
+  if not filter_dict:
+    return '', []
+
+  supported_ops = {
+      'eq',
+      'neq',
+      'lt',
+      'lte',
+      'gt',
+      'gte',
+      'isin',
+      'notin',
+      'range',
+  }
+
+  conditions = []
+  values = []
+
+  # Build the SQL conditions for each operation.
+  for op_name, op_filters in filter_dict.items():
+
+    if op_name not in supported_ops:
+      raise ValueError(
+          f'Unsupported operation: `{op_name}`. Supported filtering operations'
+          f' are: {supported_ops}.'
+      )
+    if not isinstance(op_filters, config_dict.ConfigDict):
+      raise ValueError(f'`{op_name}` value must be a ConfigDict.')
+
+    for key, value in op_filters.items():
+      if table_prefix:
+        column = f'{table_prefix}.{key}'
+      else:
+        column = key
+
+      # Check that the key is a valid SQL identifier.
+      if not is_valid_sql_identifier(key):
+        raise ValueError(
+            f'Table column `{column}` is not a valid SQL identifier. Fix the'
+            f' filter rule under the `{op_name}` operation.'
+        )
+
+      # Normalize the value.
+      value = normalize_sql_value(value)
+
+      # Build the current SQL condition.
+      if op_name == 'eq':
+        if value is None:
+          conditions.append(f'{column} IS NULL')
+        else:
+          conditions.append(f'{column} = ?')
+          values.append(value)
+      elif op_name == 'neq':
+        if value is None:
+          conditions.append(f'{column} IS NOT NULL')
+        else:
+          conditions.append(f'{column} != ?')
+          values.append(value)
+      elif op_name == 'lt':
+        conditions.append(f'{column} < ?')
+        values.append(value)
+      elif op_name == 'lte':
+        conditions.append(f'{column} <= ?')
+        values.append(value)
+      elif op_name == 'gt':
+        conditions.append(f'{column} > ?')
+        values.append(value)
+      elif op_name == 'gte':
+        conditions.append(f'{column} >= ?')
+        values.append(value)
+      elif op_name == 'isin':
+        if not isinstance(value, list):
+          raise ValueError(f'`{op_name}` value must be a list.')
+        placeholders = ['?'] * len(value)
+        placeholders_str = ', '.join(placeholders)
+        conditions.append(f'{column} IN ({placeholders_str})')
+        values.extend(value)
+      elif op_name == 'notin':
+        if not isinstance(value, list):
+          raise ValueError(f'`{op_name}` value must be a list.')
+        placeholders = ['?'] * len(value)
+        placeholders_str = ', '.join(placeholders)
+        conditions.append(f'{column} NOT IN ({placeholders_str})')
+        values.extend(value)
+      elif op_name == 'range':
+        if not isinstance(value, list) or len(value) != 2:
+          raise ValueError(f'`{op_name}` value must be a list of 2 elements.')
+        conditions.append(f'{column} BETWEEN ? AND ?')
+        values.extend(value)
+
+  return ' AND '.join(conditions), values
+
+
 @dataclasses.dataclass
-class SQLiteUsearchDB(interface.HopliteDBInterface):
+class SQLiteUSearchDB(interface.HopliteDBInterface):
   """SQLite hoplite database, using USearch for vector storage.
 
   USearch provides both indexing for approximate nearest neighbor search and
@@ -69,8 +242,8 @@ class SQLiteUsearchDB(interface.HopliteDBInterface):
     db_path: The path to the database directory.
     db: The sqlite3 database connection.
     ui: The USearch index.
-    embedding_dim: The dimension of the embeddings.
-    embedding_dtype: The data type of the embeddings.
+    _embedding_dim: The dimension of the embeddings.
+    _embedding_dtype: The data type of the embeddings.
     _cursor: The sqlite3 cursor.
     _ui_loaded: Whether the USearch index was loaded in memory.
     _ui_updated: Whether the USearch index was updated since the last load and
@@ -78,54 +251,201 @@ class SQLiteUsearchDB(interface.HopliteDBInterface):
   """
 
   # User-provided.
-  db_path: str
+  db_path: epath.Path
 
   # Instantiated during creation.
   db: sqlite3.Connection
   ui: uindex.Index
 
-  # Obtained from the usearch_cfg.
-  embedding_dim: int
-  embedding_dtype: type[Any] = np.float16
+  # Obtained from `usearch_cfg`.
+  _embedding_dim: int
+  _embedding_dtype: type[Any] = np.float16
 
   # Dynamic state.
+  _extra_table_columns: dict[str, dict[str, type[Any]]] = dataclasses.field(
+      default_factory=lambda: {
+          'deployments': {},
+          'recordings': {},
+          'windows': {},
+          'annotations': {},
+      }
+  )
   _cursor: sqlite3.Cursor | None = None
   _ui_loaded: bool = False
   _ui_updated: bool = False
+
+  @property
+  def sqlite_path(self) -> epath.Path:
+    return self.db_path / HOPLITE_FILENAME
+
+  @property
+  def usearch_path(self) -> epath.Path:
+    return self.db_path / UINDEX_FILENAME
+
+  @staticmethod
+  def _setup_tables(cursor: sqlite3.Cursor) -> None:
+    """Create the SQLite tables.
+
+    Args:
+      cursor: The SQLite cursor to use.
+    """
+
+    # Skip setting up the tables if they already exist.
+    cursor.execute("""
+        SELECT name
+        FROM sqlite_master
+        WHERE name = "windows" AND type = "table"
+        """)
+    if cursor.fetchone() is not None:
+      return
+
+    # Enable foreign keys.
+    cursor.execute('PRAGMA foreign_keys = ON')
+
+    # Create the deployments table.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS deployments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            project TEXT NOT NULL,
+            latitude REAL,
+            longitude REAL
+        )
+        """)
+
+    # Create the recordings table.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS recordings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL,
+            datetime TEXT,
+            deployment_id INTEGER,
+            FOREIGN KEY (deployment_id) REFERENCES deployments(id)
+            ON DELETE CASCADE
+        )
+        """)
+
+    # Create the windows table.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS windows (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recording_id INTEGER NOT NULL,
+            offsets BLOB NOT NULL,
+            FOREIGN KEY (recording_id) REFERENCES recordings(id)
+            ON DELETE CASCADE
+        )
+        """)
+
+    # Create the annotations table.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS annotations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            window_id INTEGER NOT NULL,
+            label TEXT NOT NULL,
+            label_type INTEGER NOT NULL,
+            provenance TEXT NOT NULL,
+            FOREIGN KEY (window_id) REFERENCES windows(id)
+            ON DELETE CASCADE
+        )
+        """)
+
+    # Create the metadata table.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS hoplite_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """)
+
+    # Create indexes for efficient lookups.
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_deployments
+        ON deployments(id)
+        """)
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_recordings
+        ON recordings(id, deployment_id)
+        """)
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_windows
+        ON windows(id, recording_id)
+        """)
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_annotations
+        ON annotations(id, window_id)
+        """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_labels
+        ON annotations(window_id, label, label_type, provenance)
+        """)
+
+  @staticmethod
+  def _get_all_metadata(cursor: sqlite3.Cursor) -> config_dict.ConfigDict:
+    """Get all key-value pairs from the metadata table.
+
+    Args:
+      cursor: The SQLite cursor to use.
+
+    Returns:
+      A ConfigDict containing all the metadata.
+    """
+
+    cursor.execute("""
+        SELECT key, value
+        FROM hoplite_metadata
+        """)
+    return config_dict.ConfigDict(
+        {k: json.loads(v) for k, v in cursor.fetchall()}
+    )
 
   @classmethod
   def create(
       cls,
       db_path: str,
       usearch_cfg: config_dict.ConfigDict | None = None,
-  ):
+  ) -> 'SQLiteUSearchDB':
+    """Connect to and, if needed, initialize the database.
+
+    Args:
+      db_path: The path to the database directory.
+      usearch_cfg: The configuration for the USearch index. If None, the config
+        is loaded from the DB.
+
+    Returns:
+      A new instance of the database.
+    """
+
+    # Create the SQLite DB.
     db_path = epath.Path(db_path)
     db_path.mkdir(parents=True, exist_ok=True)
-    hoplite_path = db_path / HOPLITE_FILENAME
-    db = sqlite3.connect(hoplite_path.as_posix())
+    sqlite_path = db_path / HOPLITE_FILENAME
+    db = sqlite3.connect(sqlite_path.as_posix())
+    db.set_trace_callback(
+        lambda statement: logging.info('Executed SQL statement: %s', statement)
+    )
     cursor = db.cursor()
-    cursor.execute('PRAGMA journal_mode=WAL;')  # Enable WAL mode
-    _setup_sqlite_tables(cursor)
+    cursor.execute('PRAGMA journal_mode = WAL')  # Enable WAL mode.
+    cls._setup_tables(cursor)
     db.commit()
 
-    # TODO(tomdenton): Check that config is consistent with the DB.
-    metadata = _get_metadata(cursor, None)
+    # Retrieve the metadata.
+    # TODO(tomdenton): Check that `usearch_cfg` is consistent with the DB.
+    metadata = cls._get_all_metadata(cursor)
     if (
         USEARCH_CONFIG_KEY in metadata
         and usearch_cfg is not None
         and metadata[USEARCH_CONFIG_KEY] != usearch_cfg
     ):
       raise ValueError(
-          'A usearch_cfg was provided, but one already exists in the DB.'
+          'A usearch_cfg was provided, but a different one already exists in'
+          ' the DB.'
       )
-    elif USEARCH_CONFIG_KEY in metadata:
+    if USEARCH_CONFIG_KEY in metadata:
       usearch_cfg = metadata[USEARCH_CONFIG_KEY]
     elif usearch_cfg is None:
-      raise ValueError('No usearch config found in DB and none provided.')
-    else:
-      _insert_metadata(cursor, USEARCH_CONFIG_KEY, usearch_cfg)
-      db.commit()
+      raise ValueError('No usearch_cfg was found in DB and none was provided.')
 
+    # Create the USearch index.
     usearch_dtype = USEARCH_DTYPES[usearch_cfg.dtype]
     index_path = db_path / UINDEX_FILENAME
     if index_path.exists():
@@ -147,59 +467,67 @@ class SQLiteUsearchDB(interface.HopliteDBInterface):
       )
       ui_in_memory = True
 
-    return SQLiteUsearchDB(
-        db_path=db_path.as_posix(),
+    # Create the Hoplite DB.
+    hoplite_db = cls(
+        db_path=db_path,
         db=db,
         ui=ui,
-        embedding_dim=usearch_cfg.embedding_dim,
-        embedding_dtype=usearch_cfg.dtype,
+        _embedding_dim=usearch_cfg.embedding_dim,
+        _embedding_dtype=usearch_cfg.dtype,
         _ui_loaded=ui_in_memory,
         _ui_updated=ui_in_memory,
     )
+    hoplite_db.insert_metadata(USEARCH_CONFIG_KEY, usearch_cfg)
+    hoplite_db.commit()
+    return hoplite_db
 
-  @property
-  def _sqlite_filepath(self) -> epath.Path:
-    return epath.Path(self.db_path) / HOPLITE_FILENAME
+  def add_extra_table_column(
+      self,
+      table_name: str,
+      column_name: str,
+      column_type: type[Any],
+  ) -> None:
+    """Add an extra column to a table in the database."""
 
-  @property
-  def _usearch_filepath(self) -> epath.Path:
-    return epath.Path(self.db_path) / UINDEX_FILENAME
+    if table_name not in [
+        'deployments',
+        'recordings',
+        'windows',
+        'annotations',
+    ]:
+      raise ValueError(f'Table `{table_name}` does not exist.')
+    if not is_valid_sql_identifier(column_name):
+      raise ValueError(f'Column `{column_name}` is not a valid SQL identifier.')
+    if not isinstance(column_type, type):
+      raise ValueError(f'Column type `{column_type}` must be a type.')
 
-  @functools.cached_property
-  def offset_dtype(self) -> type[Any]:
-    """The data type of the offsets in the database."""
-    if self.ui.size == 0:
-      return np.float32
-    # Otherwise, check the in-memory index.
-    # Some old DBs may have float16 offsets, but in this case will always
-    # have a single offset, so we can detect this and return float16.
-    idx = self.get_one_embedding_id()
+    sql_type = {
+        int: 'INTEGER',
+        float: 'REAL',
+        str: 'TEXT',
+        bytes: 'BLOB',
+        dt.datetime: 'TEXT',
+    }
+    if column_type not in sql_type:
+      raise ValueError(
+          f'Column type `{column_type.__name__}` is not supported. Use one of:'
+          f' {", ".join([key.__name__ for key in sql_type.keys()])}'
+      )
+
     cursor = self._get_cursor()
-    cursor.execute(
-        """
-        SELECT he.offsets
-        FROM hoplite_sources hs
-        JOIN hoplite_embeddings he ON hs.id = he.source_idx
-        WHERE he.id = ?;
-        """,
-        (int(idx),),
-    )
-    binary_offsets = cursor.fetchall()[0]
-    if len(binary_offsets) == 2:
-      return np.float16
-    else:
-      return np.float32
+    cursor.execute(f"""
+        ALTER TABLE {table_name}
+        ADD COLUMN {column_name} {sql_type[column_type]}
+        """)
 
-  def thread_split(self):
-    """Get a new instance of the SQLite DB."""
-    return self.create(self.db_path)
+    self._extra_table_columns[table_name][column_name] = column_type
 
-  def _get_cursor(self) -> sqlite3.Cursor:
-    if self._cursor is None:
-      self._cursor = self.db.cursor()
-    return self._cursor
+  def get_extra_table_columns(self) -> dict[str, dict[str, type[Any]]]:
+    """Get all extra columns in the database."""
+    return self._extra_table_columns
 
-  def commit(self):
+  def commit(self) -> None:
+    """Commit any pending transactions to the database."""
     self.db.commit()
     if self._cursor is not None:
       self._cursor.close()
@@ -208,388 +536,700 @@ class SQLiteUsearchDB(interface.HopliteDBInterface):
       self.ui.save()
       self._ui_updated = False
 
-  def get_embedding_ids(self) -> np.ndarray:
-    # Note that USearch can also create a list of all keys, but it seems
-    # quite slow.
-    cursor = self._get_cursor()
-    cursor.execute("""SELECT id FROM hoplite_embeddings;""")
-    return np.array(tuple(int(c[0]) for c in cursor.fetchall()))
+  def thread_split(self) -> 'SQLiteUSearchDB':
+    """Get a new instance of the SQLite DB."""
+    return self.create(self.db_path.as_posix())
 
-  def get_one_embedding_id(self) -> int:
-    cursor = self._get_cursor()
-    cursor.execute("""SELECT id FROM hoplite_embeddings LIMIT 1;""")
-    return int(cursor.fetchone()[0])
+  def _get_cursor(self) -> sqlite3.Cursor:
+    """Get the SQLite cursor."""
+    if self._cursor is None:
+      self._cursor = self.db.cursor()
+    return self._cursor
 
   def insert_metadata(self, key: str, value: config_dict.ConfigDict) -> None:
     """Insert a key-value pair into the metadata table."""
-    json_coded = value.to_json()
+
     cursor = self._get_cursor()
+    json_coded = value.to_json()
     cursor.execute(
         """
-      INSERT INTO hoplite_metadata (key, data) VALUES (?, ?)
-      ON CONFLICT (key) DO UPDATE SET data = excluded.data;
-    """,
+        INSERT INTO hoplite_metadata (key, value)
+        VALUES (?, ?)
+        ON CONFLICT (key)
+        DO UPDATE SET value = excluded.value
+        """,
         (key, json_coded),
     )
 
   def get_metadata(self, key: str | None) -> config_dict.ConfigDict:
     """Get a key-value pair from the metadata table."""
-    cursor = self._get_cursor()
-    return _get_metadata(cursor, key)
 
-  def get_dataset_names(self) -> tuple[str, ...]:
-    """Get all dataset names in the database."""
     cursor = self._get_cursor()
-    cursor.execute("""SELECT DISTINCT dataset FROM hoplite_sources;""")
-    return tuple(c[0] for c in cursor.fetchall())
 
-  def _get_source_id(
-      self, dataset_name: str, source_id: str, insert: bool = False
-  ) -> int | None:
-    cursor = self._get_cursor()
+    if key is None:
+      cursor.execute("""
+          SELECT key, value
+          FROM hoplite_metadata
+          """)
+      return config_dict.ConfigDict(
+          {k: json.loads(v) for k, v in cursor.fetchall()}
+      )
+
     cursor.execute(
         """
-      SELECT id FROM hoplite_sources WHERE dataset = ? AND source = ?;
-    """,
-        (dataset_name, source_id),
+        SELECT value
+        FROM hoplite_metadata
+        WHERE key = ?
+        """,
+        (key,),
     )
     result = cursor.fetchone()
-    if result is None and insert:
-      cursor.execute(
-          """
-        INSERT INTO hoplite_sources (dataset, source) VALUES (?, ?);
-      """,
-          (dataset_name, source_id),
-      )
-      return int(cursor.lastrowid)
-    elif result is None:
-      return None
-    return int(result[0])
+    if result is None:
+      raise KeyError(f'Metadata key not found: {key}')
+    return config_dict.ConfigDict(json.loads(result[0]))
 
-  def insert_embedding(
-      self, embedding: np.ndarray, source: interface.EmbeddingSource
-  ) -> int:
-    if embedding.shape[-1] != self.embedding_dim:
-      raise ValueError('Incorrect embedding dimension.')
+  def remove_metadata(self, key: str | None) -> None:
+    """Remove a key-value pair from the metadata table."""
+
     cursor = self._get_cursor()
-    source_id = self._get_source_id(
-        source.dataset_name, source.source_id, insert=True
-    )
-    offset_bytes = serialize_embedding(source.offsets, self.offset_dtype)
+
+    if key is None:
+      cursor.execute("""
+          DELETE FROM hoplite_metadata
+          """)
+      return
+
     cursor.execute(
         """
-      INSERT INTO hoplite_embeddings (source_idx, offsets) VALUES (?, ?);
-    """,
-        (source_id, offset_bytes),
+        DELETE FROM hoplite_metadata
+        WHERE key = ?
+        """,
+        (key,),
     )
-    embedding_id = int(cursor.lastrowid)
+    if cursor.rowcount == 0:
+      raise KeyError(f'Metadata key not found: {key}')
+
+  def insert_deployment(
+      self,
+      name: str,
+      project: str,
+      latitude: float | None = None,
+      longitude: float | None = None,
+      **kwargs: Any,
+  ) -> int:
+    """Insert a deployment into the database."""
+
+    cursor = self._get_cursor()
+    columns_str, placeholders_str, values = format_sql_insert_values(
+        name=name,
+        project=project,
+        latitude=latitude,
+        longitude=longitude,
+        **kwargs,
+    )
+    cursor.execute(
+        f"""
+        INSERT INTO deployments {columns_str}
+        VALUES {placeholders_str}
+        """,
+        values,
+    )
+
+    deployment_id = cursor.lastrowid
+    if deployment_id is None:
+      raise RuntimeError('Error inserting deployment into the database.')
+    return deployment_id
+
+  def get_deployment(self, deployment_id: int) -> interface.Deployment:
+    """Get a deployment from the database."""
+
+    cursor = self._get_cursor()
+    cursor.execute(
+        """
+        SELECT *
+        FROM deployments
+        WHERE id = ?
+        """,
+        (deployment_id,),
+    )
+    result = cursor.fetchone()
+    if result is None:
+      raise KeyError(f'Deployment id not found: {deployment_id}')
+
+    columns = [col[0] for col in cursor.description]
+    return interface.Deployment(**dict(zip(columns, result)))
+
+  def remove_deployment(self, deployment_id: int) -> None:
+    """Remove a deployment from the database."""
+
+    # TODO(stefanistrate): Make sure to remove corresponding embeddings from
+    # USearch if removing this deployment triggers window removals.
+    cursor = self._get_cursor()
+    cursor.execute(
+        """
+        DELETE FROM deployments
+        WHERE id = ?
+        """,
+        (deployment_id,),
+    )
+    if cursor.rowcount == 0:
+      raise KeyError(f'Deployment id not found: {deployment_id}')
+
+  def insert_recording(
+      self,
+      filename: str,
+      datetime: dt.datetime | None = None,
+      deployment_id: int | None = None,
+      **kwargs: Any,
+  ) -> int:
+    """Insert a recording into the database."""
+
+    cursor = self._get_cursor()
+    columns_str, placeholders_str, values = format_sql_insert_values(
+        filename=filename,
+        datetime=datetime,
+        deployment_id=deployment_id,
+        **kwargs,
+    )
+    cursor.execute(
+        f"""
+        INSERT INTO recordings {columns_str}
+        VALUES {placeholders_str}
+        """,
+        values,
+    )
+
+    recording_id = cursor.lastrowid
+    if recording_id is None:
+      raise RuntimeError('Error inserting recording into the database.')
+    return recording_id
+
+  def get_recording(self, recording_id: int) -> interface.Recording:
+    """Get a recording from the database."""
+
+    cursor = self._get_cursor()
+    cursor.execute(
+        """
+        SELECT *
+        FROM recordings
+        WHERE id = ?
+        """,
+        (recording_id,),
+    )
+    result = cursor.fetchone()
+    if result is None:
+      raise KeyError(f'Recording id not found: {recording_id}')
+
+    columns = [col[0] for col in cursor.description]
+    recording = interface.Recording(**dict(zip(columns, result)))
+    if recording.datetime is not None:
+      recording.datetime = dt.datetime.fromisoformat(recording.datetime)
+    return recording
+
+  def remove_recording(self, recording_id: int) -> None:
+    """Remove a recording from the database."""
+
+    # TODO(stefanistrate): Make sure to remove corresponding embeddings from
+    # USearch if removing this recording triggers window removals.
+    cursor = self._get_cursor()
+    cursor.execute(
+        """
+        DELETE FROM recordings
+        WHERE id = ?
+        """,
+        (recording_id,),
+    )
+    if cursor.rowcount == 0:
+      raise KeyError(f'Recording id not found: {recording_id}')
+
+  def insert_window(
+      self,
+      recording_id: int,
+      offsets: np.ndarray,
+      embedding: np.ndarray | None = None,
+      **kwargs: Any,
+  ) -> int:
+    """Insert a window into the database."""
+
+    if embedding is not None and embedding.shape[-1] != self._embedding_dim:
+      raise ValueError(
+          f'Incorrect embedding dimension. Expected {self._embedding_dim}, but'
+          f' got {embedding.shape[-1]}.'
+      )
+
+    cursor = self._get_cursor()
+    columns_str, placeholders_str, values = format_sql_insert_values(
+        recording_id=recording_id,
+        offsets=offsets,
+        **kwargs,
+    )
+    cursor.execute(
+        f"""
+        INSERT INTO windows {columns_str}
+        VALUES {placeholders_str}
+        """,
+        values,
+    )
+
+    window_id = cursor.lastrowid
+    if window_id is None:
+      raise RuntimeError('Error inserting window into the database.')
+    if embedding is not None:
+      if not self._ui_loaded:
+        self.ui.load()
+        self._ui_loaded = True
+      self.ui.add(window_id, embedding.astype(self._embedding_dtype))
+      self._ui_updated = True
+    return window_id
+
+  def get_window(
+      self,
+      window_id: int,
+      include_embedding: bool = False,
+  ) -> interface.Window:
+    """Get a window from the database."""
+
+    cursor = self._get_cursor()
+    cursor.execute(
+        """
+        SELECT *
+        FROM windows
+        WHERE id = ?
+        """,
+        (window_id,),
+    )
+    result = cursor.fetchone()
+    if result is None:
+      raise KeyError(f'Window id not found: {window_id}')
+
+    columns = [col[0] for col in cursor.description]
+    window = interface.Window(
+        embedding=None,
+        **dict(zip(columns, result)),
+    )
+    window.offsets = deserialize_array(window.offsets, np.float32)
+    if include_embedding:
+      window.embedding = self.get_embedding(window_id)
+    return window
+
+  def get_embedding(self, window_id: int) -> np.ndarray:
+    """Get an embedding vector from the database."""
+
+    found = self.ui.contains(window_id)
+    if not isinstance(found, bool):
+      raise RuntimeError(
+          'Expected bool result from the USearch `contains()` method, but got'
+          f' {type(found)}: {found}.'
+      )
+    if not found:
+      raise KeyError(f'Embedding vector not found for window id: {window_id}')
+    embedding = self.ui.get(window_id)
+    if not isinstance(embedding, np.ndarray):
+      raise RuntimeError(
+          'Expected np.ndarray result from the USearch `get()` method, but got'
+          f' {type(embedding)}: {embedding}.'
+      )
+    return embedding
+
+  def get_embeddings_batch(
+      self,
+      window_ids: Sequence[int] | np.ndarray,
+  ) -> np.ndarray:
+    """Get a batch of embedding vectors from the database."""
+
+    if not isinstance(window_ids, np.ndarray):
+      window_ids = np.array(window_ids, dtype=np.int32)
+
+    found = self.ui.contains(window_ids)
+    if not isinstance(found, np.ndarray):
+      raise RuntimeError(
+          'Expected np.ndarray result from the USearch `contains()` method, but'
+          f' got {type(found)}: {found}.'
+      )
+    if not np.all(found):
+      raise KeyError(
+          'Embedding vectors not found for window ids:'
+          f' {window_ids[~found].tolist()}'
+      )
+    embeddings_batch = self.ui.get(window_ids)
+    if not isinstance(embeddings_batch, np.ndarray):
+      raise RuntimeError(
+          'Expected np.ndarray result from the USearch `get()` method, but got'
+          f' {type(embeddings_batch)}: {embeddings_batch}.'
+      )
+    return embeddings_batch
+
+  def remove_window(self, window_id: int) -> None:
+    """Remove a window from the database."""
+
+    cursor = self._get_cursor()
+    cursor.execute(
+        """
+        DELETE FROM windows
+        WHERE id = ?
+        """,
+        (window_id,),
+    )
+    if cursor.rowcount == 0:
+      raise KeyError(f'Window id not found: {window_id}')
 
     if not self._ui_loaded:
       self.ui.load()
       self._ui_loaded = True
-
-    self.ui.add(embedding_id, embedding.astype(self.embedding_dtype))
+    self.ui.remove(window_id)
     self._ui_updated = True
-    return embedding_id
+
+  def insert_annotation(
+      self,
+      window_id: int,
+      label: str,
+      label_type: interface.LabelType,
+      provenance: str,
+      skip_duplicates: bool = False,
+      **kwargs: Any,
+  ) -> int:
+    """Insert an annotation into the database."""
+
+    if skip_duplicates:
+      matches = self.get_all_annotations(
+          filter=config_dict.create(
+              eq=dict(window_id=window_id, label=label, label_type=label_type)
+          )
+      )
+      if matches:
+        return matches[0].id
+
+    cursor = self._get_cursor()
+    columns_str, placeholders_str, values = format_sql_insert_values(
+        window_id=window_id,
+        label=label,
+        label_type=label_type,
+        provenance=provenance,
+        **kwargs,
+    )
+    cursor.execute(
+        f"""
+        INSERT INTO annotations {columns_str}
+        VALUES {placeholders_str}
+        """,
+        values,
+    )
+
+    annotation_id = cursor.lastrowid
+    if annotation_id is None:
+      raise RuntimeError('Error inserting annotation into the database.')
+    return cursor.lastrowid
+
+  def get_annotation(self, annotation_id: int) -> interface.Annotation:
+    """Get an annotation from the database."""
+
+    cursor = self._get_cursor()
+    cursor.execute(
+        """
+        SELECT *
+        FROM annotations
+        WHERE id = ?
+        """,
+        (annotation_id,),
+    )
+    result = cursor.fetchone()
+    if result is None:
+      raise KeyError(f'Annotation id not found: {annotation_id}')
+
+    columns = [col[0] for col in cursor.description]
+    annotation = interface.Annotation(**dict(zip(columns, result)))
+    annotation.label_type = interface.LabelType(annotation.label_type)
+    return annotation
+
+  def remove_annotation(self, annotation_id: int) -> None:
+    """Remove an annotation from the database."""
+
+    cursor = self._get_cursor()
+    cursor.execute(
+        """
+        DELETE FROM annotations
+        WHERE id = ?
+        """,
+        (annotation_id,),
+    )
+    if cursor.rowcount == 0:
+      raise KeyError(f'Annotation id not found: {annotation_id}')
 
   def count_embeddings(self) -> int:
-    """Counts the number of hoplite_embeddings in the 'embeddings' table."""
+    """Get the number of embeddings in the database."""
     return self.ui.size
 
-  def embedding_dimension(self) -> int:
-    return self.embedding_dim
-
-  def get_embedding(self, embedding_id: int) -> np.ndarray:
-    contains = self.ui.contains(embedding_id)
-    if not np.all(contains):
-      raise ValueError(f'Embeddings {embedding_id} not found.')
-    emb = self.ui.get(embedding_id)
-    return np.array(emb)
-
-  def get_embedding_source(
-      self, embedding_id: int
-  ) -> interface.EmbeddingSource:
-    cursor = self._get_cursor()
-    cursor.execute(
-        """
-        SELECT hs.dataset, hs.source, he.offsets
-        FROM hoplite_sources hs
-        JOIN hoplite_embeddings he ON hs.id = he.source_idx
-        WHERE he.id = ?;
-        """,
-        (int(embedding_id),),
-    )
-    dataset, source, offsets = cursor.fetchall()[0]
-    offsets = deserialize_embedding(offsets, self.offset_dtype)
-    return interface.EmbeddingSource(dataset, str(source), offsets)
-
-  def get_embeddings(
-      self, embedding_ids: np.ndarray
-  ) -> tuple[np.ndarray, np.ndarray]:
-    contains = self.ui.contains(embedding_ids)
-    if not np.all(contains):
-      raise ValueError(f'Embeddings {embedding_ids[~contains]} not found.')
-    embs = self.ui.get(embedding_ids)
-    return embedding_ids, np.array(embs)
-
-  def get_embeddings_by_source(
+  def match_window_ids(
       self,
-      dataset_name: str,
-      source_id: str | None,
-      offsets: np.ndarray | None = None,
-  ) -> np.ndarray:
-    """Get the embedding IDs for all embeddings matching the indicated source.
+      deployments_filter: config_dict.ConfigDict | None = None,
+      recordings_filter: config_dict.ConfigDict | None = None,
+      windows_filter: config_dict.ConfigDict | None = None,
+      annotations_filter: config_dict.ConfigDict | None = None,
+      limit: int | None = None,
+  ) -> Sequence[int]:
+    """Get matching window IDs from the database based on given filters."""
 
-    Args:
-      dataset_name: The name of the dataset to search.
-      source_id: The ID of the source to search. If None, all sources are
-        searched.
-      offsets: The offsets of the source to search. If None, all offsets are
-        searched.
+    # TODO(stefanistrate): Is it more efficient for large databases to run
+    # multiple SELECT queries (in order: by deployment, by recording, by window,
+    # by annotation) instead of running one giant JOIN?
 
-    Returns:
-      A list of embedding IDs matching the indicated source parameters.
-    """
     cursor = self._get_cursor()
-    if source_id is None:
-      query = (
-          'SELECT id, offsets FROM hoplite_embeddings '
-          'WHERE hoplite_embeddings.source_idx IN ('
-          '  SELECT id FROM hoplite_sources '
-          '  WHERE hoplite_sources.dataset = ?'
-          ');'
-      )
-      cursor.execute(query, (dataset_name,))
+
+    # Pick which tables need to be queried.
+    query_tables = set()
+    if annotations_filter:
+      query_tables |= {'annotations'}
+    if windows_filter:
+      query_tables |= {'windows'}
+    if recordings_filter:
+      query_tables |= {'windows', 'recordings'}
+    if deployments_filter:
+      query_tables |= {'windows', 'recordings', 'deployments'}
+    if not any([
+        annotations_filter,
+        windows_filter,
+        recordings_filter,
+        deployments_filter,
+    ]):
+      query_tables = {'windows'}
+
+    # Build the `SELECT ... FROM ... [JOIN ...]` part of the SQL query.
+    if 'annotations' in query_tables:
+      select_clause = 'SELECT DISTINCT annotations.window_id'
+      from_clause = 'FROM annotations'
     else:
-      source_idx = self._get_source_id(dataset_name, source_id, insert=False)
-      query = (
-          'SELECT id, offsets FROM hoplite_embeddings '
-          'WHERE hoplite_embeddings.source_idx = ?;'
+      select_clause = 'SELECT windows.id'
+      from_clause = 'FROM windows'
+    if 'annotations' in query_tables and 'windows' in query_tables:
+      from_clause += ' JOIN windows ON annotations.window_id = windows.id'
+    if 'windows' in query_tables and 'recordings' in query_tables:
+      from_clause += ' JOIN recordings ON windows.recording_id = recordings.id'
+    if 'recordings' in query_tables and 'deployments' in query_tables:
+      from_clause += (
+          ' JOIN deployments ON recordings.deployment_id = deployments.id'
       )
-      cursor.execute(query, (source_idx,))
-    result_pairs = cursor.fetchall()
-    outputs = []
-    for idx, offsets_bytes in result_pairs:
-      got_offsets = deserialize_embedding(offsets_bytes, self.offset_dtype)
-      if offsets is not None and not np.array_equal(got_offsets, offsets):
-        continue
-      outputs.append(idx)
-    return np.array(outputs)
 
-  def insert_label(
-      self, label: interface.Label, skip_duplicates: bool = False
-  ) -> bool:
-    if label.type is None:
-      raise ValueError('label type must be set')
-    if label.provenance is None:
-      raise ValueError('label source must be set')
-    if skip_duplicates and label in self.get_labels(label.embedding_id):
-      return False
+    # Build the `WHERE ...` part of the SQL query.
+    conditions, values = tuple(
+        zip(*[
+            format_sql_where_conditions(
+                annotations_filter, table_prefix='annotations'
+            ),
+            format_sql_where_conditions(windows_filter, table_prefix='windows'),
+            format_sql_where_conditions(
+                recordings_filter, table_prefix='recordings'
+            ),
+            format_sql_where_conditions(
+                deployments_filter, table_prefix='deployments'
+            ),
+        ])
+    )
+    conditions_str = ' AND '.join(c for c in conditions if c)
+    values = list(itertools.chain.from_iterable(values))
+    where_clause = f'WHERE {conditions_str}' if conditions_str else ''
 
-    cursor = self._get_cursor()
+    # Build the `LIMIT ...` part of the SQL query.
+    if limit is None:
+      limit_clause = ''
+    else:
+      limit_clause = f'LIMIT {limit}'
+
+    # Execute the SQL query and return the window IDs.
     cursor.execute(
-        """
-      INSERT INTO hoplite_labels (embedding_id, label, type, provenance) VALUES (?, ?, ?, ?);
-    """,
-        (
-            int(label.embedding_id),
-            label.label,
-            label.type.value,
-            label.provenance,
-        ),
+        f"""
+        {select_clause}
+        {from_clause}
+        {where_clause}
+        {limit_clause}
+        """,
+        values,
     )
-    return True
+    return [result[0] for result in cursor.fetchall()]
 
-  def get_embeddings_by_label(
-      self,
-      label: str,
-      label_type: interface.LabelType | None = interface.LabelType.POSITIVE,
-      provenance: str | None = None,
-  ) -> np.ndarray:
-    query = 'SELECT embedding_id FROM hoplite_labels WHERE label = ?'
-    pred = (label,)
-    if label_type is not None:
-      query += ' AND type = ?'
-      pred = pred + (label_type.value,)
-    if provenance is not None:
-      query += ' AND provenance = ?'
-      pred = pred + (provenance,)
-    cursor = self._get_cursor()
-    results = cursor.execute(query, pred).fetchall()
-    ids = np.array(tuple(int(c[0]) for c in results), np.int64)
-    return np.unique(ids)
+  def get_all_projects(self) -> Sequence[str]:
+    """Get all distinct projects from the database."""
 
-  def get_labels(self, embedding_id: int) -> tuple[interface.Label, ...]:
     cursor = self._get_cursor()
-    cursor.execute(
-        """
-      SELECT embedding_id, label, type, provenance FROM hoplite_labels WHERE embedding_id = ?;
-    """,
-        (int(embedding_id),),
-    )
-    results = cursor.fetchall()
-    return tuple(
-        interface.Label(int(r[0]), r[1], interface.LabelType(r[2]), r[3])
-        for r in results
-    )
-
-  def get_classes(self) -> Sequence[str]:
-    cursor = self._get_cursor()
-    cursor.execute('SELECT DISTINCT label FROM hoplite_labels ORDER BY label;')
-    return tuple(r[0] for r in cursor.fetchall())
-
-  def get_class_counts(
-      self, label_type: interface.LabelType = interface.LabelType.POSITIVE
-  ) -> dict[str, int]:
-    cursor = self._get_cursor()
-    # Subselect with distinct is needed to avoid double-counting the same label
-    # on the same embedding because of different provenances.
     cursor.execute("""
-      SELECT label, type, COUNT(*)
-      FROM (
-          SELECT DISTINCT embedding_id, label, type FROM hoplite_labels)
-      GROUP BY label, type;
-    """)
-    results = collections.defaultdict(int)
-    for r in cursor.fetchall():
-      if r[1] == label_type.value:
-        results[r[0]] = r[2]
-      else:
-        results[r[0]] += 0
-    return results
+        SELECT DISTINCT project
+        FROM deployments
+        ORDER BY project
+        """)
+    return [result[0] for result in cursor.fetchall()]
 
-  def print_table_values(self, table_name):
-    """Prints all values from the specified table in the SQLite database."""
+  def get_all_deployments(
+      self,
+      filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
+  ) -> Sequence[interface.Deployment]:
+    """Get all deployments from the database."""
+
     cursor = self._get_cursor()
-    select_query = f'SELECT * FROM {table_name};'  # Query to select all rows
-    cursor.execute(select_query)
-
-    # Fetch all rows
-    rows = cursor.fetchall()
-
-    # Print header (optional)
-    if rows:
-      # Column names
-      print(', '.join(column[0] for column in cursor.description))
-
-    # Print each row as a comma-separated string
-    for row in rows:
-      print(', '.join(str(value) for value in row))
-
-
-def _setup_sqlite_tables(cursor: sqlite3.Cursor) -> None:
-  """Create the needed tables in the SQLite databse.
-
-  USearch acts as both the index and vector store. The SQLite `embeddings` table
-  is used for joining embeddings with sources.
-
-  Args:
-    cursor: The SQLite cursor to use.
-  """
-  cursor.execute("""
-  SELECT name FROM sqlite_master WHERE type='table' AND name='hoplite_labels';
-  """)
-  if cursor.fetchone() is not None:
-    return
-
-  # Create embedding sources table
-  cursor.execute("""
-      CREATE TABLE IF NOT EXISTS hoplite_sources (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          dataset STRING NOT NULL,
-          source STRING NOT NULL
-      );
-  """)
-
-  # Create embeddings table for joining embeddings with sources.
-  cursor.execute("""
-      CREATE TABLE IF NOT EXISTS hoplite_embeddings (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          source_idx INTEGER NOT NULL,
-          offsets BLOB NOT NULL,
-          FOREIGN KEY (source_idx) REFERENCES hoplite_sources(id)
-      );
-  """)
-
-  cursor.execute("""
-      CREATE TABLE IF NOT EXISTS hoplite_metadata (
-          key STRING PRIMARY KEY,
-          data STRING NOT NULL
-      );
-  """)
-
-  # Create hoplite_labels table.
-  cursor.execute("""
-  CREATE TABLE IF NOT EXISTS hoplite_labels (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      embedding_id INTEGER NOT NULL,
-      label STRING NOT NULL,
-      type INT NOT NULL,
-      provenance STRING NOT NULL,
-      FOREIGN KEY (embedding_id) REFERENCES hoplite_embeddings(id)
-  )""")
-
-  # Create indices for efficient lookups.
-  cursor.execute("""
-  CREATE UNIQUE INDEX IF NOT EXISTS
-      idx_embedding ON hoplite_embeddings (id);
-  """)
-  cursor.execute("""
-  CREATE UNIQUE INDEX IF NOT EXISTS
-      source_pairs ON hoplite_sources (dataset, source);
-  """)
-  cursor.execute("""
-  CREATE INDEX IF NOT EXISTS embedding_source ON hoplite_embeddings (source_idx);
-  """)
-  cursor.execute("""
-  CREATE INDEX IF NOT EXISTS idx_label ON hoplite_labels (embedding_id, label);
-  """)
-
-
-def _insert_metadata(
-    cursor: sqlite3.Cursor, key: str, value: config_dict.ConfigDict
-):
-  """Insert a key-value pair into the metadata table."""
-  json_coded = value.to_json()
-  cursor.execute(
-      """
-    INSERT INTO hoplite_metadata (key, data) VALUES (?, ?)
-    ON CONFLICT (key) DO UPDATE SET data = excluded.data;
-  """,
-      (key, json_coded),
-  )
-
-
-def _get_metadata(cursor: sqlite3.Cursor, key: str | None):
-  """Retrieve metadata from the SQLite database."""
-  if key is None:
-    cursor.execute("""SELECT key, data FROM hoplite_metadata;""")
-    return config_dict.ConfigDict(
-        {k: json.loads(v) for k, v in cursor.fetchall()}
+    conditions_str, values = format_sql_where_conditions(filter)
+    where_clause = f'WHERE {conditions_str}' if conditions_str else ''
+    cursor.execute(
+        f"""
+        SELECT *
+        FROM deployments
+        {where_clause}
+        """,
+        values,
     )
 
-  cursor.execute(
-      """
-    SELECT data FROM hoplite_metadata WHERE key = ?;
-  """,
-      (key,),
-  )
-  result = cursor.fetchone()
-  if result is None:
-    raise KeyError(f'Metadata key not found: {key}')
-  return config_dict.ConfigDict(json.loads(result[0]))
+    columns = [col[0] for col in cursor.description]
+    deployments = [
+        interface.Deployment(**dict(zip(columns, result)))
+        for result in cursor.fetchall()
+    ]
+    return deployments
 
+  def get_all_recordings(
+      self,
+      filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
+  ) -> Sequence[interface.Recording]:
+    """Get all recordings from the database."""
 
-def serialize_embedding(
-    embedding: np.ndarray, embedding_dtype: type[Any]
-) -> bytes:
-  return embedding.astype(np.dtype(embedding_dtype).newbyteorder('<')).tobytes()
+    cursor = self._get_cursor()
+    conditions_str, values = format_sql_where_conditions(filter)
+    where_clause = f'WHERE {conditions_str}' if conditions_str else ''
+    cursor.execute(
+        f"""
+        SELECT *
+        FROM recordings
+        {where_clause}
+        """,
+        values,
+    )
 
+    recordings = []
+    columns = [col[0] for col in cursor.description]
+    for result in cursor.fetchall():
+      recording = interface.Recording(**dict(zip(columns, result)))
+      if recording.datetime is not None:
+        recording.datetime = dt.datetime.fromisoformat(recording.datetime)
+      recordings.append(recording)
+    return recordings
 
-def deserialize_embedding(
-    serialized_embedding: bytes, embedding_dtype: type[Any]
-) -> np.ndarray:
-  return np.frombuffer(
-      serialized_embedding,
-      dtype=np.dtype(embedding_dtype).newbyteorder('<'),
-  )
+  def get_all_windows(
+      self,
+      include_embedding: bool = False,
+      filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
+  ) -> Sequence[interface.Window]:
+    """Get all windows from the database."""
+
+    cursor = self._get_cursor()
+    conditions_str, values = format_sql_where_conditions(filter)
+    where_clause = f'WHERE {conditions_str}' if conditions_str else ''
+    cursor.execute(
+        f"""
+        SELECT *
+        FROM windows
+        {where_clause}
+        """,
+        values,
+    )
+
+    windows = []
+    columns = [col[0] for col in cursor.description]
+    for result in cursor.fetchall():
+      window = interface.Window(
+          embedding=None,
+          **dict(zip(columns, result)),
+      )
+      window.offsets = deserialize_array(window.offsets, np.float32)
+      if include_embedding:
+        window.embedding = self.get_embedding(window.id)
+      windows.append(window)
+    return windows
+
+  def get_all_annotations(
+      self,
+      filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
+  ) -> Sequence[interface.Annotation]:
+    """Get all annotations from the database."""
+
+    cursor = self._get_cursor()
+    conditions_str, values = format_sql_where_conditions(filter)
+    where_clause = f'WHERE {conditions_str}' if conditions_str else ''
+    cursor.execute(
+        f"""
+        SELECT *
+        FROM annotations
+        {where_clause}
+        """,
+        values,
+    )
+
+    annotations = []
+    columns = [col[0] for col in cursor.description]
+    for result in cursor.fetchall():
+      annotation = interface.Annotation(**dict(zip(columns, result)))
+      annotation.label_type = interface.LabelType(annotation.label_type)
+      annotations.append(annotation)
+    return annotations
+
+  def get_all_labels(
+      self,
+      label_type: interface.LabelType | None = None,
+  ) -> Sequence[str]:
+    """Get all distinct labels from the database."""
+
+    cursor = self._get_cursor()
+    if label_type is None:
+      where_clause = ''
+      values = tuple()
+    else:
+      filter_dict = config_dict.create(label_type=label_type)
+      conditions_str, values = format_sql_where_conditions(filter_dict)
+      where_clause = f'WHERE {conditions_str}' if conditions_str else ''
+    cursor.execute(
+        f"""
+        SELECT DISTINCT label
+        FROM annotations
+        {where_clause}
+        ORDER BY label
+        """,
+        values,
+    )
+    return [result[0] for result in cursor.fetchall()]
+
+  def count_each_label(
+      self,
+      label_type: interface.LabelType | None = None,
+  ) -> collections.Counter[str]:
+    """Count each label in the database, ignoring provenance."""
+
+    cursor = self._get_cursor()
+    if label_type is None:
+      where_clause = ''
+      values = tuple()
+    else:
+      filter_dict = config_dict.create(eq=dict(label_type=label_type))
+      conditions_str, values = format_sql_where_conditions(filter_dict)
+      where_clause = f'WHERE {conditions_str}' if conditions_str else ''
+
+    # Subselect with DISTINCT is needed to avoid double-counting the same label
+    # on the same window because of different provenances.
+    cursor.execute(
+        f"""
+        SELECT label, COUNT(*)
+        FROM (
+            SELECT DISTINCT window_id, label, label_type
+            FROM annotations
+            {where_clause}
+        )
+        GROUP BY label
+        ORDER BY label
+        """,
+        values,
+    )
+    return collections.Counter(
+        {result[0]: result[1] for result in cursor.fetchall()}
+    )
+
+  def get_embedding_dim(self) -> int:
+    """Get the embedding dimension."""
+    return self._embedding_dim
+
+  def get_embedding_dtype(self) -> type[Any]:
+    """Get the embedding data type."""
+    return self._embedding_dtype

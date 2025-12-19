@@ -20,6 +20,7 @@ authors = [
     {name = "Jeninka Hamer", email="hamer@google.com"},
     {name = "Bart van Merriënboer", email="bartvm@google.com"},
     {name = "Frank Zhang", email="zhangfrank@google.com"},
+    {name = "Ștefan Istrate", email="istefan@google.com"},
 ]
 
 [tool.poetry.dependencies]

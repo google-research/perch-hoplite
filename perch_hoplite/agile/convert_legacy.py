@@ -98,7 +98,7 @@ def convert_tfrecords(
     embs = ex['embedding']
     flat_embeddings = np.reshape(embs, [-1, embs.shape[-1]])
     file_id = str(ex['filename'], 'utf8')
-    offset_s = ex['timestamp_s']
+    offset_s = ex['timestamp_s'].item()
     if max_count > 0 and db.count_embeddings() >= max_count:
       break
     recording_id = db.insert_recording(
@@ -107,7 +107,7 @@ def convert_tfrecords(
     for i in range(flat_embeddings.shape[0]):
       embedding = flat_embeddings[i]
       start_offset = offset_s + hop_size_s * i
-      offsets = np.array([start_offset, start_offset + window_size_s])
+      offsets = [start_offset, start_offset + window_size_s]
       db.insert_window(recording_id, offsets, embedding)
       if max_count > 0 and db.count_embeddings() >= max_count:
         break

@@ -40,6 +40,33 @@ USEARCH_DTYPES = {
 }
 
 
+def adapt_float_list(data: list[float]) -> bytes:
+  return np.array(
+      data,
+      dtype=np.dtype('<f4'),  # little-endian np.float32
+  ).tobytes()
+
+
+def convert_float_list(blob: bytes) -> list[float]:
+  return np.frombuffer(
+      blob,
+      dtype=np.dtype('<f4'),  # little-endian np.float32
+  ).tolist()
+
+
+def approx_float_list(blob: bytes, target: bytes) -> bool:
+  return np.allclose(
+      convert_float_list(blob),
+      convert_float_list(target),
+      rtol=0.0,
+      atol=1e-6,
+  )
+
+
+sqlite3.register_adapter(list, adapt_float_list)
+sqlite3.register_converter('FLOAT_LIST', convert_float_list)
+
+
 def get_default_usearch_config(
     embedding_dim: int,
 ) -> config_dict.ConfigDict:
@@ -51,14 +78,6 @@ def get_default_usearch_config(
   usearch_cfg.expansion_add = 256
   usearch_cfg.expansion_search = 128
   return usearch_cfg
-
-
-def serialize_array(arr: np.ndarray, dtype: type[Any]) -> bytes:
-  return arr.astype(np.dtype(dtype).newbyteorder('<')).tobytes()
-
-
-def deserialize_array(serialized: bytes, dtype: type[Any]) -> np.ndarray:
-  return np.frombuffer(serialized, dtype=np.dtype(dtype).newbyteorder('<'))
 
 
 def is_valid_sql_identifier(name: str) -> bool:
@@ -81,8 +100,6 @@ def normalize_sql_value(value: Any) -> Any:
     return value.value
   elif isinstance(value, dt.datetime):
     return value.isoformat()
-  elif isinstance(value, np.ndarray):
-    return serialize_array(value, np.float32)
   elif isinstance(value, np.integer):
     return int(value)
   elif isinstance(value, np.floating):
@@ -147,6 +164,7 @@ def format_sql_where_conditions(
       'isin',
       'notin',
       'range',
+      'approx',
   }
 
   conditions = []
@@ -181,6 +199,11 @@ def format_sql_where_conditions(
 
       # Build the current SQL condition.
       if op_name == 'eq':
+        if key == 'offsets':
+          logging.warning(
+              "Do not apply `eq` to the `offsets` unless you know what you're "
+              'doing. Apply `approx` instead to avoid floating point errors.'
+          )
         if value is None:
           conditions.append(f'{column} IS NULL')
         else:
@@ -223,6 +246,12 @@ def format_sql_where_conditions(
           raise ValueError(f'`{op_name}` value must be a list of 2 elements.')
         conditions.append(f'{column} BETWEEN ? AND ?')
         values.extend(value)
+      elif op_name == 'approx':
+        if key == 'offsets':
+          conditions.append(f'APPROX_FLOAT_LIST({column}, ?) = TRUE')
+        else:
+          conditions.append(f'ABS({column} - ?) < 1e-6')
+        values.append(value)
 
   return ' AND '.join(conditions), values
 
@@ -330,7 +359,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
         CREATE TABLE IF NOT EXISTS windows (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             recording_id INTEGER NOT NULL,
-            offsets BLOB NOT NULL,
+            offsets FLOAT_LIST NOT NULL,
             FOREIGN KEY (recording_id) REFERENCES recordings(id)
             ON DELETE CASCADE
         )
@@ -419,7 +448,16 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     db_path = epath.Path(db_path)
     db_path.mkdir(parents=True, exist_ok=True)
     sqlite_path = db_path / HOPLITE_FILENAME
-    db = sqlite3.connect(sqlite_path.as_posix())
+    db = sqlite3.connect(
+        sqlite_path.as_posix(),
+        detect_types=sqlite3.PARSE_DECLTYPES,
+    )
+    db.create_function(
+        name='APPROX_FLOAT_LIST',
+        narg=2,
+        func=approx_float_list,
+        deterministic=True,
+    )
     db.set_trace_callback(
         lambda statement: logging.info('Executed SQL statement: %s', statement)
     )
@@ -745,7 +783,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   def insert_window(
       self,
       recording_id: int,
-      offsets: np.ndarray,
+      offsets: list[float],
       embedding: np.ndarray | None = None,
       **kwargs: Any,
   ) -> int:
@@ -807,7 +845,6 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
         embedding=None,
         **dict(zip(columns, result)),
     )
-    window.offsets = deserialize_array(window.offsets, np.float32)
     if include_embedding:
       window.embedding = self.get_embedding(window_id)
     return window
@@ -1135,7 +1172,6 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
           embedding=None,
           **dict(zip(columns, result)),
       )
-      window.offsets = deserialize_array(window.offsets, np.float32)
       if include_embedding:
         window.embedding = self.get_embedding(window.id)
       windows.append(window)

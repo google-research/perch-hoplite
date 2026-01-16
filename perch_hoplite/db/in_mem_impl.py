@@ -23,6 +23,7 @@ import datetime as dt
 import itertools
 from typing import Any
 
+from absl import logging
 from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.db import interface
@@ -55,6 +56,7 @@ def select_matching_keys(
       'isin',
       'notin',
       'range',
+      'approx',
   }
   for op_name, op_filters in filter_dict.items():
     if op_name not in supported_ops:
@@ -71,6 +73,11 @@ def select_matching_keys(
         attr = getattr(obj, key, None)
 
         if op_name == 'eq':
+          if key == 'offsets':
+            logging.warning(
+                "Do not apply `eq` to the `offsets` unless you know what you're"
+                ' doing. Apply `approx` instead to avoid floating point errors.'
+            )
           if attr is None:
             if value is not None:
               return False
@@ -133,6 +140,15 @@ def select_matching_keys(
             return False
           if attr < value[0] or attr > value[1]:
             return False
+        elif op_name == 'approx':
+          if attr is None or value is None:
+            return False
+          if key == 'offsets':
+            if not np.allclose(attr, value, rtol=0.0, atol=1e-6):
+              return False
+          else:
+            if abs(attr - value) >= 1e-6:
+              return False
 
     return True
 
@@ -308,7 +324,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
   def insert_window(
       self,
       recording_id: int,
-      offsets: np.ndarray,
+      offsets: list[float],
       embedding: np.ndarray | None = None,
       **kwargs: Any,
   ) -> int:

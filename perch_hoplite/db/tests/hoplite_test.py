@@ -111,7 +111,7 @@ class HopliteTest(parameterized.TestCase):
     one_dep_id = db.insert_deployment(name='q', project='q')
     one_rec_id = db.insert_recording(filename='x', deployment_id=one_dep_id)
     one_emb_id = db.insert_window(
-        recording_id=one_rec_id, offsets=np.array([5.0]), embedding=one_emb
+        recording_id=one_rec_id, offsets=[5.0], embedding=one_emb
     )
     self.assertLen(db.match_window_ids(), 1001)
     db.commit()

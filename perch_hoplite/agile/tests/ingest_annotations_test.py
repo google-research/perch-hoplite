@@ -91,7 +91,7 @@ class IngestAnnotationsTest(absltest.TestCase):
     for offset in emb_offsets:
       emb_idx = db.insert_window(
           recording_id=recording_id,
-          offsets=np.array([offset, offset + window_size_s], np.float32),
+          offsets=[offset, offset + window_size_s],
           embedding=rng.normal([db.get_embedding_dim()]),
       )
       emb_idxes.append(emb_idx)

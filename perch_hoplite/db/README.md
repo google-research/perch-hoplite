@@ -58,7 +58,7 @@ erDiagram
     __windows__ {
         int __id__ PK
         int __recording_id__ FK
-        numpy_ndarray __offsets__
+        list[float] __offsets__
         numpy_ndarray __embedding__
         * _[dynamic_info]_
     }
@@ -178,7 +178,8 @@ db.add_extra_table_column("annotations", "extra", int)
 
 ### Working with Individual Deployments
 
-Inserting a new deployment can be done with:
+Every new deployment requires at least a `name` and a `project`. Inserting a new
+deployment can be done with:
 
 ```python
 deployment_id = db.insert_deployment(
@@ -227,23 +228,29 @@ associated recordings, windows and annotations.
 
 ### Working with Individual Recordings
 
-Inserting a new recording can be done with (note that `deployment_id` is
-optional):
+Every new recording requires at least a `filename`. Recordings don't necessarily
+need to belong to a deployment (that's why `deployment_id` is optional), to make
+things simpler for users with one single deployment and for users not interested
+in working with deployment-level metadata. Inserting a new recording can be done
+with:
 
 ```python
 import datetime as dt
 
 recording_id = db.insert_recording(
   filename="f1",
-  deployment_id=1,
 )
 recording_id = db.insert_recording(
   filename="f2",
-  datetime=dt.datetime(2000, 1, 1),
   deployment_id=1,
 )
 recording_id = db.insert_recording(
   filename="f3",
+  datetime=dt.datetime(2000, 1, 1),
+  deployment_id=1,
+)
+recording_id = db.insert_recording(
+  filename="f4",
   datetime=dt.datetime(2000, 1, 1),
   extra=5,
 )
@@ -266,25 +273,26 @@ associated windows and annotations.
 
 ### Working with Individual Windows and Embeddings
 
-Inserting a new window can be done with:
+Every new window requires at least a `recording_id`, some `offsets` and an
+`embedding`. Inserting a new window can be done with:
 
 ```python
 import numpy as np
 
 window_id = db.insert_window(
   recording_id=1,
-  offsets=np.array([0, 1]),
+  offsets=[0, 1],
   embedding=np.random.normal(size=1280),
 )
 window_id = db.insert_window(
   recording_id=1,
-  offsets=np.array([1, 2]),
+  offsets=[1, 2],
   embedding=np.random.normal(size=1280),
   extra=777,
 )
 window_id = db.insert_window(
   recording_id=1,
-  offsets=np.array([2, 3]),
+  offsets=[2, 3],
   embedding=np.random.normal(size=1280),
   extra=999,
 )
@@ -326,7 +334,8 @@ associated annotations.
 
 ### Working with Individual Annotations
 
-Inserting a new annotation can be done with:
+Every new annotation requires at least a `window_id`, a `label`, a `label_type`
+and a `provenance`. Inserting a new annotation can be done with:
 
 ```python
 from perch_hoplite.db.interface import LabelType
@@ -414,6 +423,7 @@ filter_dict = config_dict.create(
     isin=dict(column=[value1, value2, value3]),
     notin=dict(column=[value1, value2, value3]),
     range=dict(column=[value1, value2]),
+    approx=dict(column=value),
 )
 ```
 
@@ -428,6 +438,8 @@ Here's the significance of all the supported rules at the moment:
 - __isin__: to test if given column is in given list of values
 - __notin__: to test if given column is not in given list of values
 - __range__: to test if given column is between two values
+- __approx__: to test if given column is approximately equal to given value
+  (within 1e-6 difference); useful for floating point comparisons
 
 ### Working Efficiently
 

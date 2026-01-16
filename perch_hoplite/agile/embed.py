@@ -85,11 +85,8 @@ def process_source_id(
       ),
       recordings_filter=config_dict.create(eq=dict(filename=source_id.file_id)),
       windows_filter=config_dict.create(
-          eq=dict(
-              offsets=np.array(
-                  [source_id.offset_s, source_id.offset_s + window_size_s],
-                  np.float16,
-              )
+          approx=dict(
+              offsets=[source_id.offset_s, source_id.offset_s + window_size_s],
           )
       ),
   )
@@ -118,10 +115,10 @@ def process_source_id(
   hop_size_s = worker.compute_hop_size_s(source_id, target_sample_rate)
   for t, embedding in enumerate(embeddings):
     offset_s = source_id.offset_s + t * hop_size_s
-    offsets_arr = np.array([offset_s, offset_s + window_size_s], np.float16)
+    offsets_list = [offset_s, offset_s + window_size_s]
     for channel_embedding in embedding:
       sources.append(source_id)
-      offsets.append(offsets_arr)
+      offsets.append(offsets_list)
       embs.append(channel_embedding)
   return sources, offsets, embs
 
@@ -285,7 +282,11 @@ class EmbedWorker:
       raise ValueError('Invalid target_sample_rate.')
     return model_hop_size_s * model_sample_rate / audio_sample_rate
 
-  def embedding_exists(self, source_id: source_info.SourceId) -> bool:
+  def embedding_exists(
+      self,
+      source_id: source_info.SourceId,
+      window_size_s: float,
+  ) -> bool:
     """Check whether embeddings already exist for the given source ID."""
     embs = self.db.match_window_ids(
         deployments_filter=config_dict.create(
@@ -295,8 +296,11 @@ class EmbedWorker:
             eq=dict(filename=source_id.file_id)
         ),
         windows_filter=config_dict.create(
-            eq=dict(
-                offsets=np.array([source_id.offset_s], np.float16),
+            approx=dict(
+                offsets=[
+                    source_id.offset_s,
+                    source_id.offset_s + window_size_s,
+                ],
             )
         ),
         limit=1,

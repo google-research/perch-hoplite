@@ -217,7 +217,7 @@ class Window(DynamicInfo):
 
   id: int
   recording_id: int
-  offsets: np.ndarray
+  offsets: list[float]
   embedding: np.ndarray | None
 
 
@@ -283,6 +283,9 @@ class HopliteDBInterface(abc.ABC):
       - column: [value1, value2, value3, ...]
     - range => to test if given column is between two values
       - column: [value1, value2]
+    - approx => to test if given column is approximately equal to given value
+                (within 1e-6 difference); useful for floating point comparisons
+      - column: value
 
   The recommended way to build such ConfigDict filters is to use something like
   this (feel free to omit operations that are not needed):
@@ -299,6 +302,7 @@ class HopliteDBInterface(abc.ABC):
       isin=dict(column=[value1, value2, value3]),
       notin=dict(column=[value1, value2, value3]),
       range=dict(column=[value1, value2]),
+      approx=dict(column=value),
   )
   ```
   """
@@ -462,7 +466,7 @@ class HopliteDBInterface(abc.ABC):
   def insert_window(
       self,
       recording_id: int,
-      offsets: np.ndarray,
+      offsets: list[float],
       embedding: np.ndarray | None = None,
       **kwargs: Any,
   ) -> int:

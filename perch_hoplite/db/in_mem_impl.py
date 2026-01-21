@@ -223,6 +223,10 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
     """No-op to commit any pending transactions to the database.."""
     pass
 
+  def rollback(self) -> None:
+    """No-op to rollback any pending transactions to the database."""
+    pass
+
   def thread_split(self) -> 'InMemoryGraphSearchDB':
     """Return the same database object since all data is in shared memory."""
     return self

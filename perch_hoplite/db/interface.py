@@ -345,6 +345,10 @@ class HopliteDBInterface(abc.ABC):
     """Commit any pending transactions to the database."""
 
   @abc.abstractmethod
+  def rollback(self) -> None:
+    """Rollback any pending transactions to the database."""
+
+  @abc.abstractmethod
   def thread_split(self) -> "HopliteDBInterface":
     """Get a new instance of the database with the same contents.
 

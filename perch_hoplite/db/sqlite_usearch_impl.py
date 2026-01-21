@@ -579,6 +579,13 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       self.ui.save()
       self._ui_updated = False
 
+  def rollback(self) -> None:
+    """Rollback any pending transactions to the database."""
+    self.db.rollback()
+    if self._cursor is not None:
+      self._cursor.close()
+      self._cursor = None
+
   def thread_split(self) -> 'SQLiteUSearchDB':
     """Get a new instance of the SQLite DB."""
     return self.create(self.db_path.as_posix())

@@ -484,6 +484,30 @@ class HopliteDBInterface(abc.ABC):
       The ID of the inserted window.
     """
 
+  def insert_windows_batch(
+      self,
+      windows_batch: Sequence[dict[str, Any]],
+      embeddings_batch: np.ndarray | None = None,
+  ) -> Sequence[int]:
+    """Insert a batch of windows into the database.
+
+    Args:
+      windows_batch: A sequence of windows to insert. Each window must be a dict
+        with same keys as the arguments of `insert_window()`, except for the
+        `embedding` argument.
+      embeddings_batch: A batch of embedding vectors for the given windows. If
+        None, no embedding vectors are inserted into the database.
+
+    Returns:
+      A sequence of IDs of the inserted windows.
+    """
+
+    window_ids = []
+    for window_kwargs, embedding in zip(windows_batch, embeddings_batch):
+      window_id = self.insert_window(embedding=embedding, **window_kwargs)
+      window_ids.append(window_id)
+    return window_ids
+
   @abc.abstractmethod
   def get_window(
       self,
@@ -512,10 +536,7 @@ class HopliteDBInterface(abc.ABC):
       An embedding vector for the given window ID.
     """
 
-  def get_embeddings_batch(
-      self,
-      window_ids: Sequence[int] | np.ndarray,
-  ) -> np.ndarray:
+  def get_embeddings_batch(self, window_ids: Sequence[int]) -> np.ndarray:
     """Get a batch of embedding vectors from the database.
 
     Args:
@@ -525,7 +546,7 @@ class HopliteDBInterface(abc.ABC):
       A batch of embedding vectors for the given window IDs.
     """
 
-    embeddings = [self.get_embedding(id) for id in window_ids]
+    embeddings = [self.get_embedding(window_id) for window_id in window_ids]
     return np.stack(embeddings)
 
   @abc.abstractmethod

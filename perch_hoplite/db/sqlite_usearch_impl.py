@@ -851,6 +851,36 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       self._ui_updated = True
     return window_id
 
+  def insert_windows_batch(
+      self,
+      windows_batch: Sequence[dict[str, Any]],
+      embeddings_batch: np.ndarray | None = None,
+  ) -> Sequence[int]:
+    """Insert a batch of windows into the database."""
+
+    if (
+        embeddings_batch is not None
+        and embeddings_batch.shape[-1] != self._embedding_dim
+    ):
+      raise ValueError(
+          f'Incorrect embedding dimension. Expected {self._embedding_dim}, but'
+          f' got {embeddings_batch.shape[-1]}.'
+      )
+
+    window_ids = [
+        self.insert_window(embedding=None, **window_kwargs)
+        for window_kwargs in windows_batch
+    ]
+
+    if embeddings_batch is not None:
+      if not self._ui_loaded:
+        self.ui.load()
+        self._ui_loaded = True
+      self.ui.add(window_ids, embeddings_batch.astype(self._embedding_dtype))
+      self._ui_updated = True
+
+    return window_ids
+
   def get_window(
       self,
       window_id: int,
@@ -905,12 +935,9 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
   def get_embeddings_batch(
       self,
-      window_ids: Sequence[int] | np.ndarray,
+      window_ids: Sequence[int],
   ) -> np.ndarray:
     """Get a batch of embedding vectors from the database."""
-
-    if not isinstance(window_ids, np.ndarray):
-      window_ids = np.array(window_ids, dtype=np.int32)
 
     found = self.ui.contains(window_ids)
     if not isinstance(found, np.ndarray):
@@ -921,7 +948,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     if not np.all(found):
       raise KeyError(
           'Embedding vectors not found for window ids:'
-          f' {window_ids[~found].tolist()}'
+          f' {itertools.compress(window_ids, ~found)}'
       )
     embeddings_batch = self.ui.get(window_ids)
     if not isinstance(embeddings_batch, np.ndarray):

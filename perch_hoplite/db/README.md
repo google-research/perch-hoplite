@@ -452,12 +452,13 @@ Here's the significance of all the supported rules at the moment:
 
 ### Working Efficiently
 
-There are 2 general recommendations we can make to speed up your Hoplite
+There are 3 general recommendations we can make to speed up your Hoplite
 experience:
 
-1. Work with filters as much as you can to reduce the amount of (meta)data you
-   need to process.
+1. Insert embeddings in batches to speed up the updates in the vector database.
 2. Retrieve embeddings in batches whenever you need more than one embedding.
+3. Work with filters as much as you can to reduce the amount of (meta)data you
+   need to process.
 
 For a typical workflow in which you need to get the embeddings for a set of
 window ids matching some metadata constraints, you can first apply filters on

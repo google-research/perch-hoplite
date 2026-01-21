@@ -86,8 +86,12 @@ class DataManager:
 
   def get_multihot_labels(self, idx: int) -> tuple[np.ndarray, np.ndarray]:
     """Create the multihot label for one example."""
+    window = self.db.get_window(idx)
     annotations = self.db.get_all_annotations(
-        config_dict.create(eq=dict(window_id=idx))
+        config_dict.create(
+            eq=dict(recording_id=window.recording_id),
+            approx=dict(offsets=window.offsets),
+        )
     )
     target_labels = self.get_target_labels()
     lbl_idxes = {label: i for i, label in enumerate(target_labels)}

@@ -369,11 +369,12 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS annotations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            window_id INTEGER NOT NULL,
+            recording_id INTEGER NOT NULL,
+            offsets FLOAT_LIST NOT NULL,
             label TEXT NOT NULL,
             label_type INTEGER NOT NULL,
             provenance TEXT NOT NULL,
-            FOREIGN KEY (window_id) REFERENCES windows(id)
+            FOREIGN KEY (recording_id) REFERENCES recordings(id)
             ON DELETE CASCADE
         )
         """)
@@ -397,15 +398,19 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
         """)
     cursor.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS idx_windows
-        ON windows(id, recording_id)
+        ON windows(id, recording_id, offsets)
+        """)
+    cursor.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_window_offsets
+        ON windows(recording_id, offsets)
         """)
     cursor.execute("""
         CREATE UNIQUE INDEX IF NOT EXISTS idx_annotations
-        ON annotations(id, window_id)
+        ON annotations(id, recording_id, offsets)
         """)
     cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_labels
-        ON annotations(window_id, label, label_type, provenance)
+        CREATE INDEX IF NOT EXISTS idx_annotation_offsets
+        ON annotations(recording_id, offsets, label, label_type, provenance)
         """)
 
   @staticmethod
@@ -681,6 +686,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   def get_deployment(self, deployment_id: int) -> interface.Deployment:
     """Get a deployment from the database."""
 
+    deployment_id = int(deployment_id)
+
     cursor = self._get_cursor()
     cursor.execute(
         """
@@ -700,8 +707,20 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   def remove_deployment(self, deployment_id: int) -> None:
     """Remove a deployment from the database."""
 
-    # TODO(stefanistrate): Make sure to remove corresponding embeddings from
-    # USearch if removing this deployment triggers window removals.
+    deployment_id = int(deployment_id)
+
+    remove_window_ids = self.match_window_ids(
+        deployments_filter=config_dict.create(
+            eq=dict(deployment_id=deployment_id)
+        )
+    )
+    if remove_window_ids:
+      if not self._ui_loaded:
+        self.ui.load()
+        self._ui_loaded = True
+      self.ui.remove(remove_window_ids)
+      self._ui_updated = True
+
     cursor = self._get_cursor()
     cursor.execute(
         """
@@ -745,6 +764,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   def get_recording(self, recording_id: int) -> interface.Recording:
     """Get a recording from the database."""
 
+    recording_id = int(recording_id)
+
     cursor = self._get_cursor()
     cursor.execute(
         """
@@ -767,8 +788,18 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   def remove_recording(self, recording_id: int) -> None:
     """Remove a recording from the database."""
 
-    # TODO(stefanistrate): Make sure to remove corresponding embeddings from
-    # USearch if removing this recording triggers window removals.
+    recording_id = int(recording_id)
+
+    remove_window_ids = self.match_window_ids(
+        recordings_filter=config_dict.create(eq=dict(recording_id=recording_id))
+    )
+    if remove_window_ids:
+      if not self._ui_loaded:
+        self.ui.load()
+        self._ui_loaded = True
+      self.ui.remove(remove_window_ids)
+      self._ui_updated = True
+
     cursor = self._get_cursor()
     cursor.execute(
         """
@@ -827,6 +858,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   ) -> interface.Window:
     """Get a window from the database."""
 
+    window_id = int(window_id)
+
     cursor = self._get_cursor()
     cursor.execute(
         """
@@ -851,6 +884,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
   def get_embedding(self, window_id: int) -> np.ndarray:
     """Get an embedding vector from the database."""
+
+    window_id = int(window_id)
 
     found = self.ui.contains(window_id)
     if not isinstance(found, bool):
@@ -899,6 +934,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   def remove_window(self, window_id: int) -> None:
     """Remove a window from the database."""
 
+    window_id = int(window_id)
+
     cursor = self._get_cursor()
     cursor.execute(
         """
@@ -918,7 +955,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
   def insert_annotation(
       self,
-      window_id: int,
+      recording_id: int,
+      offsets: list[float],
       label: str,
       label_type: interface.LabelType,
       provenance: str,
@@ -930,7 +968,10 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     if skip_duplicates:
       matches = self.get_all_annotations(
           filter=config_dict.create(
-              eq=dict(window_id=window_id, label=label, label_type=label_type)
+              eq=dict(
+                  recording_id=recording_id, label=label, label_type=label_type
+              ),
+              approx=dict(offsets=offsets),
           )
       )
       if matches:
@@ -938,7 +979,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
     cursor = self._get_cursor()
     columns_str, placeholders_str, values = format_sql_insert_values(
-        window_id=window_id,
+        recording_id=recording_id,
+        offsets=offsets,
         label=label,
         label_type=label_type,
         provenance=provenance,
@@ -960,6 +1002,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   def get_annotation(self, annotation_id: int) -> interface.Annotation:
     """Get an annotation from the database."""
 
+    annotation_id = int(annotation_id)
+
     cursor = self._get_cursor()
     cursor.execute(
         """
@@ -980,6 +1024,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
   def remove_annotation(self, annotation_id: int) -> None:
     """Remove an annotation from the database."""
+
+    annotation_id = int(annotation_id)
 
     cursor = self._get_cursor()
     cursor.execute(
@@ -1013,35 +1059,28 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     cursor = self._get_cursor()
 
     # Pick which tables need to be queried.
-    query_tables = set()
+    query_tables = {'windows'}
     if annotations_filter:
       query_tables |= {'annotations'}
-    if windows_filter:
-      query_tables |= {'windows'}
     if recordings_filter:
-      query_tables |= {'windows', 'recordings'}
+      query_tables |= {'recordings'}
     if deployments_filter:
-      query_tables |= {'windows', 'recordings', 'deployments'}
-    if not any([
-        annotations_filter,
-        windows_filter,
-        recordings_filter,
-        deployments_filter,
-    ]):
-      query_tables = {'windows'}
+      query_tables |= {'recordings', 'deployments'}
 
     # Build the `SELECT ... FROM ... [JOIN ...]` part of the SQL query.
     if 'annotations' in query_tables:
-      select_clause = 'SELECT DISTINCT annotations.window_id'
-      from_clause = 'FROM annotations'
+      select_clause = 'SELECT DISTINCT windows.id'
     else:
       select_clause = 'SELECT windows.id'
-      from_clause = 'FROM windows'
-    if 'annotations' in query_tables and 'windows' in query_tables:
-      from_clause += ' JOIN windows ON annotations.window_id = windows.id'
-    if 'windows' in query_tables and 'recordings' in query_tables:
+    from_clause = 'FROM windows'
+    if 'annotations' in query_tables:
+      from_clause += (
+          ' JOIN annotations ON windows.recording_id = annotations.recording_id'
+          ' AND APPROX_FLOAT_LIST(windows.offsets, annotations.offsets) = TRUE'
+      )
+    if 'recordings' in query_tables:
       from_clause += ' JOIN recordings ON windows.recording_id = recordings.id'
-    if 'recordings' in query_tables and 'deployments' in query_tables:
+    if 'deployments' in query_tables:
       from_clause += (
           ' JOIN deployments ON recordings.deployment_id = deployments.id'
       )
@@ -1244,12 +1283,12 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       where_clause = f'WHERE {conditions_str}' if conditions_str else ''
 
     # Subselect with DISTINCT is needed to avoid double-counting the same label
-    # on the same window because of different provenances.
+    # on the same recording offsets because of different provenances.
     cursor.execute(
         f"""
         SELECT label, COUNT(*)
         FROM (
-            SELECT DISTINCT window_id, label, label_type
+            SELECT DISTINCT recording_id, offsets, label, label_type
             FROM annotations
             {where_clause}
         )

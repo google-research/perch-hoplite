@@ -231,7 +231,8 @@ class Annotation(DynamicInfo):
   """Annotation info."""
 
   id: int
-  window_id: int
+  recording_id: int
+  offsets: list[float]
   label: str
   label_type: LabelType
   provenance: str
@@ -538,7 +539,8 @@ class HopliteDBInterface(abc.ABC):
   @abc.abstractmethod
   def insert_annotation(
       self,
-      window_id: int,
+      recording_id: int,
+      offsets: list[float],
       label: str,
       label_type: LabelType,
       provenance: str,
@@ -548,14 +550,15 @@ class HopliteDBInterface(abc.ABC):
     """Insert an annotation into the database.
 
     Args:
-      window_id: The ID of the window to which the annotation points.
+      recording_id: The ID of the recording to which the annotation refers to.
+      offsets: The offsets in the recording to which the annotation refers to.
       label: The annotation label.
       label_type: The type of label (e.g. positive or negative).
       provenance: The provenance of the annotation.
-      skip_duplicates: If True and another annotation with the same (window_id,
-        label, label_type) already exists in the database, return the id (or one
-        of the ids) of that matching annotation. Otherwise, the annotation is
-        inserted regardless of duplicates.
+      skip_duplicates: If True and another annotation with the same
+        (recording_id, offsets, label, label_type) already exists in the
+        database, return the id (or one of the ids) of that matching annotation.
+        Otherwise, the annotation is inserted regardless of duplicates.
       **kwargs: Additional keyword arguments to pass to the annotation.
 
     Returns:

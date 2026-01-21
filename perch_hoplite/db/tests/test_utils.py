@@ -85,7 +85,7 @@ def insert_random_embeddings(
 
     embedding = np.float32(rng.normal(size=emb_dim, loc=0, scale=0.1))
     offsets = rng.integers(0, 100, size=[1])
-    offsets = np.array([offsets[0], offsets[0] + window_size_s])
+    offsets = [offsets[0], offsets[0] + window_size_s]
     db.insert_window(recording_id, offsets, embedding)
   db.commit()
 
@@ -140,8 +140,10 @@ def add_random_labels(
       label_type = interface.LabelType.POSITIVE
     else:
       label_type = interface.LabelType.NEGATIVE
+    window = db.get_window(idx)
     db.insert_annotation(
-        window_id=idx,
+        recording_id=window.recording_id,
+        offsets=window.offsets,
         label=str(rng.choice(CLASS_LABELS)),
         label_type=label_type,
         provenance=provenance,

@@ -150,6 +150,8 @@ class EmbeddingDisplay:
   """Object wrapping an embedded audio example for display."""
 
   window_id: int
+  recording_id: int
+  offsets: list[float]
   dataset_name: str
   uri: str
   offset_s: float
@@ -262,7 +264,8 @@ class EmbeddingDisplay:
       labels.append(
           interface.Annotation(
               id=-1,
-              window_id=self.window_id,
+              recording_id=self.recording_id,
+              offsets=self.offsets,
               label=lbl,
               label_type=lbl_type,
               provenance=provenance,
@@ -309,20 +312,25 @@ class EmbeddingDisplayGroup:
     members = []
     for result in results:
       window_id = int(result.window_id)
-      embedding = db.get_window(window_id)
-      recording = db.get_recording(embedding.recording_id)
+      window = db.get_window(window_id)
+      recording = db.get_recording(window.recording_id)
       deployment = db.get_deployment(recording.deployment_id)
       annotations = db.get_all_annotations(
-          filter=config_dict.create(eq=dict(window_id=window_id))
+          filter=config_dict.create(
+              eq=dict(recording_id=window.recording_id),
+              approx=dict(offsets=window.offsets),
+          )
       )
       if [a for a in annotations if a.label in filter_labels]:
         continue
       members.append(
           EmbeddingDisplay(
               window_id=window_id,
+              recording_id=window.recording_id,
+              offsets=window.offsets,
               dataset_name=deployment.project,
               uri=recording.filename,
-              offset_s=embedding.offsets[0],
+              offset_s=window.offsets[0],
               score=result.sort_score,
               sample_rate_hz=sample_rate_hz,
               frame_rate=frame_rate,

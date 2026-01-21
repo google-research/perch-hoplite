@@ -79,9 +79,9 @@ class AnnotatedDatasetIngestor:
           ),
           recordings_filter=config_dict.create(eq=dict(filename=file_id)),
       ):
-        offsets = db.get_window(idx).offsets
-        start_offset = offsets[0]
-        end_offset = offsets[1]
+        window = db.get_window(idx)
+        start_offset = window.offsets[0]
+        end_offset = window.offsets[1]
         emb_annos = source_annos[source_annos['start_time_s'] < end_offset]
         emb_annos = emb_annos[emb_annos['end_time_s'] > start_offset]
         # All of the remaining annotations match the target embedding.
@@ -89,7 +89,8 @@ class AnnotatedDatasetIngestor:
           for label in labels:
             label_set.add(label)
             db.insert_annotation(
-                window_id=idx,
+                recording_id=window.recording_id,
+                offsets=window.offsets,
                 label=label,
                 label_type=interface.LabelType.POSITIVE,
                 provenance=provenance,

@@ -87,14 +87,14 @@ class IngestAnnotationsTest(absltest.TestCase):
     )
     window_size_s = 5.0
     emb_offsets = [175, 185, 275, 230, 235]
-    emb_idxes = []
+    windows = []
     for offset in emb_offsets:
       emb_idx = db.insert_window(
           recording_id=recording_id,
           offsets=[offset, offset + window_size_s],
           embedding=rng.normal([db.get_embedding_dim()]),
       )
-      emb_idxes.append(emb_idx)
+      windows.append(db.get_window(emb_idx))
 
     hawaii_annos_path = path_utils.get_absolute_path(
         'agile/tests/testdata/hawaii.csv'
@@ -115,7 +115,10 @@ class IngestAnnotationsTest(absltest.TestCase):
     # The window at offset 175 should have no labels.
     self.assertEmpty(
         db.get_all_annotations(
-            config_dict.create(eq=dict(window_id=emb_idxes[0]))
+            config_dict.create(
+                eq=dict(recording_id=windows[0].recording_id),
+                approx=dict(offsets=windows[0].offsets),
+            )
         )
     )  # offset 175
 
@@ -126,26 +129,38 @@ class IngestAnnotationsTest(absltest.TestCase):
 
     # There are two jabwar annotations for the window at offset 185.
     offset_185_labels = db.get_all_annotations(
-        config_dict.create(eq=dict(window_id=emb_idxes[1]))
+        config_dict.create(
+            eq=dict(recording_id=windows[1].recording_id),
+            approx=dict(offsets=windows[1].offsets),
+        )
     )
     self.assertLen(offset_185_labels, 2)
     _check_label('jabwar', offset_185_labels[0])
     _check_label('jabwar', offset_185_labels[1])
 
     offset_275_labels = db.get_all_annotations(
-        config_dict.create(eq=dict(window_id=emb_idxes[2]))
+        config_dict.create(
+            eq=dict(recording_id=windows[2].recording_id),
+            approx=dict(offsets=windows[2].offsets),
+        )
     )
     self.assertLen(offset_275_labels, 1)
     _check_label('hawama', offset_275_labels[0])
 
     self.assertEmpty(
         db.get_all_annotations(
-            config_dict.create(eq=dict(window_id=emb_idxes[3]))
+            config_dict.create(
+                eq=dict(recording_id=windows[3].recording_id),
+                approx=dict(offsets=windows[3].offsets),
+            )
         )
     )  # offset 230
 
     offset_235_labels = db.get_all_annotations(
-        config_dict.create(eq=dict(window_id=emb_idxes[4]))
+        config_dict.create(
+            eq=dict(recording_id=windows[4].recording_id),
+            approx=dict(offsets=windows[4].offsets),
+        )
     )
     self.assertLen(offset_235_labels, 1)
     _check_label('ercfra', offset_235_labels[0])

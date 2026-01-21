@@ -203,12 +203,15 @@ class ClassifierDataTest(absltest.TestCase):
         rng=np.random.default_rng(42),
     )
 
-    add_label = lambda id, lbl_idx, lbl_type: db.insert_annotation(
-        window_id=id,
-        label=db_test_utils.CLASS_LABELS[lbl_idx],
-        label_type=lbl_type,
-        provenance='test',
-    )
+    def add_label(window_id, lbl_idx, lbl_type):
+      window = db.get_window(window_id)
+      db.insert_annotation(
+          recording_id=window.recording_id,
+          offsets=window.offsets,
+          label=db_test_utils.CLASS_LABELS[lbl_idx],
+          label_type=lbl_type,
+          provenance='test',
+      )
 
     with self.subTest('single_positive_label'):
       add_label(1, 3, interface.LabelType.POSITIVE)

@@ -276,7 +276,7 @@ def csv_worker_fn(
   with epath.Path(state.csv_filepath).open('a') as f:
     csv_writer = csv.writer(f)
     for idx, logit in zip(window_ids, logits):
-      window = db.get_window(int(idx))
+      window = db.get_window(idx)
       recording = db.get_recording(window.recording_id)
       deployment = db.get_deployment(recording.deployment_id)
       for a in np.argwhere(logit > state.threshold):

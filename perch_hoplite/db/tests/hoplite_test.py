@@ -133,27 +133,31 @@ class HopliteTest(parameterized.TestCase):
   def test_labels_db_interface(self, db_type):
     rng = np.random.default_rng(42)
     db = test_utils.make_db(self.tempdir, db_type, 1000, rng, EMBEDDING_SIZE)
-    ids = db.match_window_ids()
+    windows = db.get_all_windows()
     db.insert_annotation(
-        window_id=ids[0],
+        recording_id=windows[0].recording_id,
+        offsets=windows[0].offsets,
         label='hawgoo',
         label_type=interface.LabelType.POSITIVE,
         provenance='human',
     )
     db.insert_annotation(
-        window_id=ids[0],
+        recording_id=windows[0].recording_id,
+        offsets=windows[0].offsets,
         label='hawgoo',
         label_type=interface.LabelType.POSITIVE,
         provenance='machine',
     )
     db.insert_annotation(
-        window_id=ids[1],
+        recording_id=windows[1].recording_id,
+        offsets=windows[1].offsets,
         label='hawgoo',
         label_type=interface.LabelType.POSITIVE,
         provenance='machine',
     )
     db.insert_annotation(
-        window_id=ids[0],
+        recording_id=windows[0].recording_id,
+        offsets=windows[0].offsets,
         label='rewbla',
         label_type=interface.LabelType.NEGATIVE,
         provenance='machine',
@@ -166,7 +170,9 @@ class HopliteTest(parameterized.TestCase):
       got = db.match_window_ids(
           annotations_filter=config_dict.create(eq=dict(label='hawgoo'))
       )
-      self.assertSequenceEqual(sorted(got), sorted([ids[0], ids[1]]))
+      self.assertSequenceEqual(
+          sorted(got), sorted([windows[0].id, windows[1].id])
+      )
 
     with self.subTest('get_embeddings_by_label_type'):
       # Now we should get the ID's for all POSITIVE 'hawgoo' labels, regardless
@@ -176,7 +182,9 @@ class HopliteTest(parameterized.TestCase):
               eq=dict(label='hawgoo', label_type=interface.LabelType.POSITIVE)
           ),
       )
-      self.assertSequenceEqual(sorted(got), sorted([ids[0], ids[1]]))
+      self.assertSequenceEqual(
+          sorted(got), sorted([windows[0].id, windows[1].id])
+      )
 
       # There are no negative 'hawgoo' labels.
       got = db.match_window_ids(
@@ -193,7 +201,7 @@ class HopliteTest(parameterized.TestCase):
               eq=dict(label='hawgoo', provenance='human')
           )
       )
-      self.assertSequenceEqual(got, [ids[0]])
+      self.assertSequenceEqual(got, [windows[0].id])
 
       # And only one example with a 'rewbla' labeled by a machine.
       got = db.match_window_ids(
@@ -201,12 +209,12 @@ class HopliteTest(parameterized.TestCase):
               eq=dict(label='rewbla', provenance='machine')
           )
       )
-      self.assertSequenceEqual(got, [ids[0]])
+      self.assertSequenceEqual(got, [windows[0].id])
 
     with self.subTest('count_all_labels'):
       # Finally, there are a total of three labels on ID 0.
       got = db.get_all_annotations(
-          config_dict.create(eq=dict(window_id=ids[0]))
+          config_dict.create(eq=dict(recording_id=windows[0].recording_id))
       )
       self.assertLen(got, 3)
 
@@ -233,13 +241,15 @@ class HopliteTest(parameterized.TestCase):
 
     with self.subTest('duplicate_labels'):
       annotation_id = db.insert_annotation(
-          window_id=ids[0],
+          recording_id=windows[0].recording_id,
+          offsets=windows[0].offsets,
           label='unique',
           label_type=interface.LabelType.POSITIVE,
           provenance='human',
       )
       dupe_annotation_id = db.insert_annotation(
-          window_id=ids[0],
+          recording_id=windows[0].recording_id,
+          offsets=windows[0].offsets,
           label='unique',
           label_type=interface.LabelType.POSITIVE,
           provenance='human',

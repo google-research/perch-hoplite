@@ -40,6 +40,12 @@ separate table called __hoplite_metadata__.
 ```mermaid
 erDiagram
     direction LR
+
+    __hoplite_metadata__ {
+        str __key__ PK
+        ConfigDict __value__
+    }
+
     __deployments__ {
         int __id__ PK
         str __name__
@@ -48,6 +54,7 @@ erDiagram
         float _longitude_
         * _[dynamic_info]_
     }
+
     __recordings__ {
         int __id__ PK
         str __filename__
@@ -55,6 +62,7 @@ erDiagram
         int _deployment_id_ FK
         * _[dynamic_info]_
     }
+
     __windows__ {
         int __id__ PK
         int __recording_id__ FK
@@ -62,21 +70,20 @@ erDiagram
         numpy_ndarray __embedding__
         * _[dynamic_info]_
     }
+
     __annotations__ {
         int __id__ PK
-        int __window_id__ FK
+        int __recording_id__ FK
+        list[float] __offsets__
         str __label__
         LabelType __label_type__
         str __provenance__
         * _[dynamic_info]_
     }
-    __hoplite_metadata__ {
-        str __key__ PK
-        ConfigDict __value__
-    }
+
     __deployments__ one optionally to zero or more __recordings__  : contains
     __recordings__ one to zero or more __windows__ : contains
-    __windows__ one to zero or more __annotations__ : contains
+    __recordings__ one to zero or more __annotations__ : contains
 ```
 
 In the diagram above, __bold attributes__ are required and _italic attributes_
@@ -118,11 +125,11 @@ The tables within the database are used as follows:
 - __windows__: Stores embedding vectors produced by some pretrained model (or in
   the case of SQLite+USearch, only gives them a unique id as they are stored
   separately in USearch), and also stores associated metadata. A window uniquely
-  identifies the fragment of a recording from which the embedding vector was
+  identifies the segment of a recording from which the embedding vector was
   computed, e.g. the start and the end offsets (in seconds) of the audio
-  fragment. For image applications, the same `offsets` column could be used to
+  segment. For image applications, the same `offsets` column could be used to
   store bounding box information (e.g. all 4 corners).
-- __annotations__: Stores annotations associated with embedding windows: a
+- __annotations__: Stores annotations associated with recording segments: a
   string label, a label type (e.g. `POSITIVE` or `NEGATIVE`), its provenance
   (e.g. the annotator's name or an id of the model which produced a
   pseudo-label). You can have many annotations per embedding window, for example
@@ -179,7 +186,7 @@ db.add_extra_table_column("annotations", "extra", int)
 ### Working with Individual Deployments
 
 Every new deployment requires at least a `name` and a `project`. Inserting a new
-deployment can be done with:
+deployment can be done like this:
 
 ```python
 deployment_id = db.insert_deployment(
@@ -211,13 +218,13 @@ deployment_id = db.insert_deployment(
 )
 ```
 
-Retrieving an existing deployment can be done with:
+Retrieving an existing deployment can be done like this:
 
 ```python
 deployment = db.get_deployment(deployment_id=1)
 ```
 
-Removing an existing deployment can be done with:
+Removing an existing deployment can be done like this:
 
 ```python
 db.remove_deployment(deployment_id=2)
@@ -232,7 +239,7 @@ Every new recording requires at least a `filename`. Recordings don't necessarily
 need to belong to a deployment (that's why `deployment_id` is optional), to make
 things simpler for users with one single deployment and for users not interested
 in working with deployment-level metadata. Inserting a new recording can be done
-with:
+like this:
 
 ```python
 import datetime as dt
@@ -256,13 +263,13 @@ recording_id = db.insert_recording(
 )
 ```
 
-Retrieving an existing recording can be done with:
+Retrieving an existing recording can be done like this:
 
 ```python
 recording = db.get_recording(recording_id=1)
 ```
 
-Removing an existing recording can be done with:
+Removing an existing recording can be done like this:
 
 ```python
 db.remove_recording(recording_id=2)
@@ -274,7 +281,7 @@ associated windows and annotations.
 ### Working with Individual Windows and Embeddings
 
 Every new window requires at least a `recording_id`, some `offsets` and an
-`embedding`. Inserting a new window can be done with:
+`embedding`. Inserting a new window can be done like this:
 
 ```python
 import numpy as np
@@ -298,7 +305,7 @@ window_id = db.insert_window(
 )
 ```
 
-Retrieving an existing window can be done with:
+Retrieving an existing window can be done like this:
 
 ```python
 window = db.get_window(window_id=1)
@@ -323,44 +330,46 @@ And if you need more than one embedding at a time (i.e. a batch), use:
 embeddings = db.get_embeddings_batch(window_ids=[1, 2])
 ```
 
-Finally, removing an existing window can be done with:
+Finally, removing an existing window can be done like this:
 
 ```python
 db.remove_window(window_id=3)
 ```
 
-**Warning!** Be careful that removing a window triggers the removal of
-associated annotations.
-
 ### Working with Individual Annotations
 
-Every new annotation requires at least a `window_id`, a `label`, a `label_type`
-and a `provenance`. Inserting a new annotation can be done with:
+Every new annotation requires at least a `recording_id`, some `offsets`, a
+`label`, a `label_type` and a `provenance`. Inserting a new annotation can be
+done like this:
 
 ```python
 from perch_hoplite.db.interface import LabelType
 
 annotation_id = db.insert_annotation(
-  window_id=1,
+  recording_id=1,
+  offsets=[0, 1],
   label="bird",
   label_type=LabelType.POSITIVE,
   provenance="me",
 )
 annotation_id = db.insert_annotation(
-  window_id=1,
+  recording_id=1,
+  offsets=[1, 2],
   label="bat",
   label_type=LabelType.POSITIVE,
   provenance="me",
   extra=11,
 )
 annotation_id = db.insert_annotation(
-  window_id=1,
+  recording_id=1,
+  offsets=[2, 3],
   label="wolf",
   label_type=LabelType.NEGATIVE,
   provenance="me",
 )
 annotation_id = db.insert_annotation(
-  window_id=1,
+  recording_id=1,
+  offsets=[3, 4],
   label="wolf",
   label_type=LabelType.POSITIVE,
   provenance="me",
@@ -368,13 +377,13 @@ annotation_id = db.insert_annotation(
 )
 ```
 
-Retrieving an existing annotation can be done with:
+Retrieving an existing annotation can be done like this:
 
 ```python
 annotation = db.get_annotation(annotation_id=1)
 ```
 
-Removing an existing recording can be done with:
+Removing an existing recording can be done like this:
 
 ```python
 db.remove_annotation(annotation_id=2)

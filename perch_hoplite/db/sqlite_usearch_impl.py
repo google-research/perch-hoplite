@@ -131,6 +131,20 @@ def format_sql_insert_values(
   return f"({', '.join(columns)})", f"({', '.join(placeholders)})", values
 
 
+def format_sql_update_on_conflict(*args: str) -> str:
+  """Build the update part of ON CONFLICT clauses for INSERT statements."""
+
+  for key in args:
+    if not is_valid_sql_identifier(key):
+      raise ValueError(f'`{key}` is not a valid SQL identifier.')
+
+  if not args:
+    return 'DO NOTHING'
+  else:
+    update_clauses_str = ', '.join([f'{key} = excluded.{key}' for key in args])
+    return f'DO UPDATE SET {update_clauses_str}'
+
+
 def format_sql_where_conditions(
     filter_dict: config_dict.ConfigDict | None = None,
     table_prefix: str | None = None,
@@ -331,6 +345,14 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     # Enable foreign keys.
     cursor.execute('PRAGMA foreign_keys = ON')
 
+    # Create the metadata table.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS hoplite_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+        """)
+
     # Create the deployments table.
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS deployments (
@@ -338,7 +360,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
             name TEXT NOT NULL,
             project TEXT NOT NULL,
             latitude REAL,
-            longitude REAL
+            longitude REAL,
+            UNIQUE (name, project)
         )
         """)
 
@@ -348,9 +371,9 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             filename TEXT NOT NULL,
             datetime TEXT,
-            deployment_id INTEGER,
-            FOREIGN KEY (deployment_id) REFERENCES deployments(id)
-            ON DELETE CASCADE
+            deployment_id INTEGER REFERENCES deployments(id) ON DELETE CASCADE,
+            UNIQUE (id, deployment_id),
+            UNIQUE (filename, deployment_id)
         )
         """)
 
@@ -358,10 +381,10 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS windows (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            recording_id INTEGER NOT NULL,
+            recording_id INTEGER NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
             offsets FLOAT_LIST NOT NULL,
-            FOREIGN KEY (recording_id) REFERENCES recordings(id)
-            ON DELETE CASCADE
+            UNIQUE (id, recording_id, offsets),
+            UNIQUE (recording_id, offsets)
         )
         """)
 
@@ -369,48 +392,23 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS annotations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            recording_id INTEGER NOT NULL,
+            recording_id INTEGER NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
             offsets FLOAT_LIST NOT NULL,
             label TEXT NOT NULL,
             label_type INTEGER NOT NULL,
             provenance TEXT NOT NULL,
-            FOREIGN KEY (recording_id) REFERENCES recordings(id)
-            ON DELETE CASCADE
+            UNIQUE (id, recording_id, offsets)
         )
         """)
 
-    # Create the metadata table.
+    # Create other indexes for efficient lookups.
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS hoplite_metadata (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        )
-        """)
-
-    # Create indexes for efficient lookups.
-    cursor.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_deployments
-        ON deployments(id)
-        """)
-    cursor.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_recordings
-        ON recordings(id, deployment_id)
-        """)
-    cursor.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_windows
-        ON windows(id, recording_id, offsets)
-        """)
-    cursor.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_window_offsets
-        ON windows(recording_id, offsets)
-        """)
-    cursor.execute("""
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_annotations
-        ON annotations(id, recording_id, offsets)
-        """)
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_annotation_offsets
+        CREATE INDEX IF NOT EXISTS idx_annotations
         ON annotations(recording_id, offsets, label, label_type, provenance)
+        """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_labels
+        ON annotations(label, label_type, provenance)
         """)
 
   @staticmethod
@@ -562,6 +560,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
         ALTER TABLE {table_name}
         ADD COLUMN {column_name} {sql_type[column_type]}
         """)
+    self.commit()
 
     self._extra_table_columns[table_name][column_name] = column_type
 
@@ -677,17 +676,24 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
         longitude=longitude,
         **kwargs,
     )
+    update_clause_str = format_sql_update_on_conflict(
+        'latitude',
+        'longitude',
+        *self._extra_table_columns['deployments'].keys(),
+    )
     cursor.execute(
         f"""
         INSERT INTO deployments {columns_str}
         VALUES {placeholders_str}
+        ON CONFLICT (name, project)
+        {update_clause_str}
         """,
         values,
     )
 
     deployment_id = cursor.lastrowid
     if deployment_id is None:
-      raise RuntimeError('Error inserting deployment into the database.')
+      raise RuntimeError('Error inserting the deployment into the database.')
     return deployment_id
 
   def get_deployment(self, deployment_id: int) -> interface.Deployment:
@@ -755,17 +761,32 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
         deployment_id=deployment_id,
         **kwargs,
     )
-    cursor.execute(
-        f"""
-        INSERT INTO recordings {columns_str}
-        VALUES {placeholders_str}
-        """,
-        values,
+    update_clause_str = format_sql_update_on_conflict(
+        'datetime',
+        *self._extra_table_columns['recordings'].keys(),
     )
+    try:
+      cursor.execute(
+          f"""
+          INSERT INTO recordings {columns_str}
+          VALUES {placeholders_str}
+          ON CONFLICT (filename, deployment_id)
+          {update_clause_str}
+          """,
+          values,
+      )
+    except sqlite3.Error as e:
+      if e.sqlite_errorname == 'SQLITE_CONSTRAINT_FOREIGNKEY':
+        custom_msg = 'Check that the deployment_id exists.'
+      else:
+        custom_msg = ''
+      raise RuntimeError(
+          f'Error inserting the recording into the database. {custom_msg}'
+      ) from e
 
     recording_id = cursor.lastrowid
     if recording_id is None:
-      raise RuntimeError('Error inserting recording into the database.')
+      raise RuntimeError('Error inserting the recording into the database.')
     return recording_id
 
   def get_recording(self, recording_id: int) -> interface.Recording:
@@ -839,17 +860,31 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
         offsets=offsets,
         **kwargs,
     )
-    cursor.execute(
-        f"""
-        INSERT INTO windows {columns_str}
-        VALUES {placeholders_str}
-        """,
-        values,
+    update_clause_str = format_sql_update_on_conflict(
+        *self._extra_table_columns['windows'].keys(),
     )
+    try:
+      cursor.execute(
+          f"""
+          INSERT INTO windows {columns_str}
+          VALUES {placeholders_str}
+          ON CONFLICT (recording_id, offsets)
+          {update_clause_str}
+          """,
+          values,
+      )
+    except sqlite3.Error as e:
+      if e.sqlite_errorname == 'SQLITE_CONSTRAINT_FOREIGNKEY':
+        custom_msg = 'Check that the recording_id exists.'
+      else:
+        custom_msg = ''
+      raise RuntimeError(
+          f'Error inserting the window into the database. {custom_msg}'
+      ) from e
 
     window_id = cursor.lastrowid
     if window_id is None:
-      raise RuntimeError('Error inserting window into the database.')
+      raise RuntimeError('Error inserting the window into the database.')
     if embedding is not None:
       if not self._ui_loaded:
         self.ui.load()
@@ -1020,17 +1055,26 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
         provenance=provenance,
         **kwargs,
     )
-    cursor.execute(
-        f"""
-        INSERT INTO annotations {columns_str}
-        VALUES {placeholders_str}
-        """,
-        values,
-    )
+    try:
+      cursor.execute(
+          f"""
+          INSERT INTO annotations {columns_str}
+          VALUES {placeholders_str}
+          """,
+          values,
+      )
+    except sqlite3.Error as e:
+      if e.sqlite_errorname == 'SQLITE_CONSTRAINT_FOREIGNKEY':
+        custom_msg = 'Check that the recording_id exists.'
+      else:
+        custom_msg = ''
+      raise RuntimeError(
+          f'Error inserting the annotation into the database. {custom_msg}'
+      ) from e
 
     annotation_id = cursor.lastrowid
     if annotation_id is None:
-      raise RuntimeError('Error inserting annotation into the database.')
+      raise RuntimeError('Error inserting the annotation into the database.')
     return cursor.lastrowid
 
   def get_annotation(self, annotation_id: int) -> interface.Annotation:

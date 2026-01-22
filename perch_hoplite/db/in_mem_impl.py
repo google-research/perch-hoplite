@@ -301,6 +301,9 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
   ) -> int:
     """Insert a recording into the database."""
 
+    if deployment_id is not None and deployment_id not in self._deployments:
+      raise ValueError(f'Deployment id not found: {deployment_id}')
+
     recording_id = self._next_recording_id
     self._recordings[recording_id] = interface.Recording(
         id=recording_id,

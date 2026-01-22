@@ -94,6 +94,7 @@ def convert_tfrecords(
   window_size_s = model_config.model_config.window_size_s
 
   deployment_id = db.insert_deployment(name=dataset_name, project=dataset_name)
+  recording_id_map = {}
   for ex in tqdm.tqdm(ds.as_numpy_iterator()):
     embs = ex['embedding']
     flat_embeddings = np.reshape(embs, [-1, embs.shape[-1]])
@@ -101,16 +102,28 @@ def convert_tfrecords(
     offset_s = ex['timestamp_s'].item()
     if max_count > 0 and db.count_embeddings() >= max_count:
       break
-    recording_id = db.insert_recording(
-        filename=file_id, deployment_id=deployment_id
-    )
-    for i in range(flat_embeddings.shape[0]):
-      embedding = flat_embeddings[i]
-      start_offset = offset_s + hop_size_s * i
-      offsets = [start_offset, start_offset + window_size_s]
-      db.insert_window(recording_id, offsets, embedding)
-      if max_count > 0 and db.count_embeddings() >= max_count:
-        break
+    # Long files were often split into shorter chunks during inference; ensure
+    # consistent assignment of windows to recordings.
+    if file_id in recording_id_map:
+      recording_id = recording_id_map[file_id]
+    else:
+      recording_id = db.insert_recording(
+          filename=file_id, deployment_id=deployment_id
+      )
+      recording_id_map[file_id] = recording_id
+    windows_batch = [
+        {
+            'recording_id': recording_id,
+            'offsets': [
+                offset_s + hop_size_s * i,
+                offset_s + hop_size_s * i + window_size_s,
+            ],
+        }
+        for i in range(flat_embeddings.shape[0])
+    ]
+    db.insert_windows_batch(windows_batch, flat_embeddings)
+    if max_count > 0 and db.count_embeddings() >= max_count:
+      break
   db.commit()
   num_embeddings = db.count_embeddings()
   print('\n\nTotal embeddings : ', num_embeddings)

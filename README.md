@@ -1,6 +1,6 @@
 # Perch Hoplite
 
-![CI](https://github.com/google-research/perch-hoplite/actions/workflows/ci_pip.yml/badge.svg)
+![CI](https://github.com/google-research/perch-hoplite/actions/workflows/ci_uv.yml/badge.svg)
 
 > **Note:** Hoplite is currently going through a major API redesign and some
 > parts are still moving.
@@ -64,31 +64,39 @@ Each sub-library has its own documentation.
 
 ## Installation
 
-The repository can be installed with either `pip` or `poetry`. Poetry allows
-more granular management of dependencies.
+We recommend using `uv` or `pip` for installation. `uv` is a fast rust-based
+pip-compatible package installer and resolver.
 
-First, install some basic dependencies. Note that for GPU support, you may
-install `tensorflow[and-cuda]` instead of `tensorflow-cpu`.
-
+First, install system dependencies for audio processing:
 ```bash
 sudo apt-get update
 sudo apt-get install libsndfile1 ffmpeg
-pip install absl-py
-pip install requests
-# You may skip tensorflow installation if only using the hoplite/db library.
-# However, these are required for agile modeling and most models in the zoo.
-pip install tensorflow-cpu
-pip install tensorflow-hub
 ```
 
-Then to install with pip:
+### With `uv`
 
+If you don't have `uv`, you can install it via `pipx install uv` or
+`pip install uv`.
+If you are developing locally, clone the repository and install in editable
+mode:
+```bash
+git clone https://github.com/google-research/perch-hoplite.git
+cd perch-hoplite
+uv pip install -e .
+```
+
+### With `pip`
+
+You can install the latest stable release from PyPI:
+```bash
+pip install perch-hoplite
+```
+Or install the latest version from GitHub:
 ```bash
 pip install git+https://github.com/google-research/perch-hoplite.git
 ```
 
-Then run the tests and check that they pass:
-
+After installation, you can run the tests to check that everything is working:
 ```bash
 python -m unittest discover -s perch_hoplite/db/tests -p "*test.py"
 python -m unittest discover -s perch_hoplite/taxonomy -p "*test.py"
@@ -96,38 +104,20 @@ python -m unittest discover -s perch_hoplite/zoo -p "*test.py"
 python -m unittest discover -s perch_hoplite/agile/tests -p "*test.py"
 ```
 
-Or, install with poetry:
-
-```bash
-# Install Poetry for package management
-curl -sSL https://install.python-poetry.org | python3 -
-
-# Install all dependencies specified in the poetry configs.
-poetry install
-```
-
 ### Notes on Dependencies
 
-Machine learning framework libraries are pretty heavy! It can also be difficult
-to coordinate CUDA versions across multiple frameworks to ensure good GPU
-behavior. Thus, we provide some ability to select dependencies according to your
-needs.
+For GPU support, you can install GPU-enabled tensorflow instead of the default
+CPU version *before* installing `perch-hoplite`. See tensorflow documentation
+for instructions relative to your CUDA version.
 
-Tensorflow is used in the `agile` library for training linear classifiers. If
-you do not need the `agile` library or any of the tensorflow models in the
-`zoo`, you may skip installation of tensorflow dependencies with pip.
-Alternatively, you can use poetry to install without tensorflow like so:
-
+The `zoo` library contains wrappers for various bioacoustic models. Some of
+these require JAX. To install with JAX dependencies:
 ```bash
-poetry install --without tf
+uv pip install -e '.[jax]'
 ```
-
-The primary place where multiple frameworks may be needed is in the `zoo`
-library, which provides wrappers for various bioacoustic models. To install with
-JAX (allowing use of some models in the `zoo`):
-
+or with pip:
 ```bash
-poetry install --with jax
+pip install 'perch-hoplite[jax]'
 ```
 
 ## Disclaimer

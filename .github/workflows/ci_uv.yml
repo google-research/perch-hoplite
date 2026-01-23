@@ -1,4 +1,4 @@
-name: ci_poetry
+name: ci
 
 on:
   push:
@@ -18,25 +18,23 @@ jobs:
         os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Poetry
-        run: pipx install poetry
+      - name: Set up uv
+        run: pipx install uv
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
         with:
           python-version: ${{ matrix.python-version }}
-          cache: 'poetry'
       - name: Install Hoplite and its dependencies
         run: |
           sudo apt-get update
           sudo apt-get install libsndfile1 ffmpeg
-          poetry install
-      - name: Test db with unittest
-        run: poetry run python -m unittest discover -s perch_hoplite/db/tests -p "*test.py"
+          uv pip sync --system requirements.txt
+          uv pip install --system -e . --no-deps
       - name: Test taxonomy with unittest
-        run: poetry run python -m unittest discover -s perch_hoplite/taxonomy -p "*test.py"
+        run: python -m unittest discover -s perch_hoplite/taxonomy -p "*test.py"
       - name: Test zoo with unittest
-        run: poetry run python -m unittest discover -s perch_hoplite/zoo -p "*test.py"
+        run: python -m unittest discover -s perch_hoplite/zoo -p "*test.py"
       - name: Test zoo tensorflow models with unittest
-        run: poetry run python -m unittest discover -s perch_hoplite/zoo/tests_tf -p "*test.py"
+        run: python -m unittest discover -s perch_hoplite/zoo/tests_tf -p "*test.py"
       - name: Test agile with unittest
-        run: poetry run python -m unittest discover -s perch_hoplite/agile/tests -p "*test.py"
+        run: python -m unittest discover -s perch_hoplite/agile/tests -p "*test.py"

@@ -1331,7 +1331,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       where_clause = ''
       values = tuple()
     else:
-      filter_dict = config_dict.create(label_type=label_type)
+      filter_dict = config_dict.create(eq=dict(label_type=label_type))
       conditions_str, values = format_sql_where_conditions(filter_dict)
       where_clause = f'WHERE {conditions_str}' if conditions_str else ''
     cursor.execute(

@@ -19,6 +19,7 @@ import collections
 from collections.abc import Sequence
 import dataclasses
 import datetime as dt
+import functools
 import itertools
 import json
 import re
@@ -37,6 +38,21 @@ UINDEX_FILENAME = 'usearch.index'
 USEARCH_CONFIG_KEY = 'usearch_config'
 USEARCH_DTYPES = {
     'float16': uindex.ScalarKind.F16,
+}
+SQL_TYPE_TO_PYTHON_TYPE = {
+    'INTEGER': int,
+    'REAL': float,
+    'TEXT': str,
+    'BLOB': bytes,
+    'FLOAT_LIST': list,
+}
+PYTHON_TYPE_TO_SQL_TYPE = {
+    int: 'INTEGER',
+    float: 'REAL',
+    str: 'TEXT',
+    bytes: 'BLOB',
+    dt.datetime: 'TEXT',
+    list: 'FLOAT_LIST',
 }
 
 
@@ -305,14 +321,6 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   _embedding_dtype: type[Any] = np.float16
 
   # Dynamic state.
-  _extra_table_columns: dict[str, dict[str, type[Any]]] = dataclasses.field(
-      default_factory=lambda: {
-          'deployments': {},
-          'recordings': {},
-          'windows': {},
-          'annotations': {},
-      }
-  )
   _cursor: sqlite3.Cursor | None = None
   _ui_loaded: bool = False
   _ui_updated: bool = False
@@ -542,27 +550,56 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     if not isinstance(column_type, type):
       raise ValueError(f'Column type `{column_type}` must be a type.')
 
-    sql_type = {
-        int: 'INTEGER',
-        float: 'REAL',
-        str: 'TEXT',
-        bytes: 'BLOB',
-        dt.datetime: 'TEXT',
-    }
-    if column_type not in sql_type:
+    if column_type not in PYTHON_TYPE_TO_SQL_TYPE:
       raise ValueError(
           f'Column type `{column_type.__name__}` is not supported. Use one of:'
-          f' {", ".join([key.__name__ for key in sql_type.keys()])}'
+          f' {", ".join([key.__name__ for key in PYTHON_TYPE_TO_SQL_TYPE.keys()])}'
       )
 
     cursor = self._get_cursor()
     cursor.execute(f"""
         ALTER TABLE {table_name}
-        ADD COLUMN {column_name} {sql_type[column_type]}
+        ADD COLUMN {column_name} {PYTHON_TYPE_TO_SQL_TYPE[column_type]}
         """)
-    self.commit()
 
-    self._extra_table_columns[table_name][column_name] = column_type
+    # Clear the cached property so that it is recomputed on the next access.
+    self.__dict__.pop('_extra_table_columns', None)
+
+  @functools.cached_property
+  def _extra_table_columns(self) -> dict[str, dict[str, type[Any]]]:
+    """Get all extra columns in the database."""
+    tables = ['deployments', 'recordings', 'windows', 'annotations']
+    default_columns = {
+        'deployments': {'id', 'name', 'project', 'latitude', 'longitude'},
+        'recordings': {'id', 'filename', 'datetime', 'deployment_id'},
+        'windows': {'id', 'recording_id', 'offsets'},
+        'annotations': {
+            'id',
+            'recording_id',
+            'offsets',
+            'label',
+            'label_type',
+            'provenance',
+        },
+    }
+    extra_columns = {t: {} for t in tables}
+    cursor = self._get_cursor()
+    for table in tables:
+      cursor.execute(f'PRAGMA table_info({table})')
+      columns_info = cursor.fetchall()
+      for col_info in columns_info:
+        # col_info: cid, name, type, notnull, dflt_value, pk
+        col_name = col_info[1]
+        col_type = col_info[2]
+        if col_name not in default_columns[table]:
+          try:
+            extra_columns[table][col_name] = SQL_TYPE_TO_PYTHON_TYPE[col_type]
+          except KeyError as e:
+            raise ValueError(
+                f'Unsupported column type {col_type} for column '
+                f'{col_name} in table {table}'
+            ) from e
+    return extra_columns
 
   def get_extra_table_columns(self) -> dict[str, dict[str, type[Any]]]:
     """Get all extra columns in the database."""
@@ -1331,7 +1368,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       where_clause = ''
       values = tuple()
     else:
-      filter_dict = config_dict.create(label_type=label_type)
+      filter_dict = config_dict.create(eq=dict(label_type=label_type))
       conditions_str, values = format_sql_where_conditions(filter_dict)
       where_clause = f'WHERE {conditions_str}' if conditions_str else ''
     cursor.execute(

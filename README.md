@@ -106,9 +106,19 @@ python -m unittest discover -s perch_hoplite/agile/tests -p "*test.py"
 
 ### Notes on Dependencies
 
-For GPU support, you can install GPU-enabled tensorflow instead of the default
-CPU version *before* installing `perch-hoplite`. See tensorflow documentation
-for instructions relative to your CUDA version.
+Tensorflow is required for agile modeling (classifier training) and for using
+the [Perch](https://www.kaggle.com/models/google/bird-vocalization-classifier)
+or [BirdNET](https://birdnet.cornell.edu/) models, but is not installed by
+default. We recommend installing one of the Tensorflow options:
+
+To install with Tensorflow (CPU version):
+```bash
+pip install 'perch-hoplite[tf]'
+```
+To install with Tensorflow with CUDA support (for GPU usage):
+```bash
+pip install 'perch-hoplite[tf-cuda]'
+```
 
 The `zoo` library contains wrappers for various bioacoustic models. Some of
 these require JAX. To install with JAX dependencies:
@@ -119,6 +129,8 @@ or with pip:
 ```bash
 pip install 'perch-hoplite[jax]'
 ```
+If installing with uv in editable mode, you can use
+`uv pip install -e '.[tf,jax]'`.
 
 ## Disclaimer
 

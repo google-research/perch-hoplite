@@ -11,9 +11,9 @@ uv python install $PYTHON_VERSION
 echo "Generating requirements for Python version: $PYTHON_VERSION"
 
 echo "Generating requirements.txt..."
-uv pip compile --python-version $PYTHON_VERSION pyproject.toml -o requirements.txt --generate-hashes
+uv pip compile --python-version $PYTHON_VERSION pyproject.toml --extra tf -o requirements.txt --generate-hashes
 
 echo "Generating requirements-jax.txt..."
-uv pip compile --python-version $PYTHON_VERSION pyproject.toml --extra jax -o requirements-jax.txt --generate-hashes
+uv pip compile --python-version $PYTHON_VERSION pyproject.toml --extra tf --extra jax -o requirements-jax.txt --generate-hashes
 
 echo "Done."

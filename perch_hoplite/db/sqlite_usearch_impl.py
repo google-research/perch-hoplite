@@ -59,14 +59,14 @@ PYTHON_TYPE_TO_SQL_TYPE = {
 def adapt_float_list(data: list[float]) -> bytes:
   return np.array(
       data,
-      dtype=np.dtype('<f4'),  # little-endian np.float32
+      dtype=np.dtype('<f8'),  # little-endian np.float64
   ).tobytes()
 
 
 def convert_float_list(blob: bytes) -> list[float]:
   return np.frombuffer(
       blob,
-      dtype=np.dtype('<f4'),  # little-endian np.float32
+      dtype=np.dtype('<f8'),  # little-endian np.float64
   ).tolist()
 
 
@@ -110,7 +110,11 @@ def is_valid_sql_identifier(name: str) -> bool:
 def normalize_sql_value(value: Any) -> Any:
   """Normalize a python value to one of the types supported by SQL."""
 
-  if isinstance(value, list) or isinstance(value, tuple):
+  if (
+      isinstance(value, list)
+      or isinstance(value, tuple)
+      or isinstance(value, np.ndarray)
+  ):
     return [normalize_sql_value(v) for v in value]
   if isinstance(value, interface.LabelType):
     return value.value

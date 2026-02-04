@@ -303,6 +303,20 @@ window_id = db.insert_window(
   embedding=np.random.normal(size=1280),
   extra=999,
 )
+window_id = db.insert_window(
+  recording_id=1,
+  offsets=[2, 3],
+  embedding=np.random.normal(size=1280),
+  extra=1000,
+  handle_duplicates="overwrite",
+)
+window_id = db.insert_window(
+  recording_id=1,
+  offsets=[2, 3],
+  embedding=np.random.normal(size=1280),
+  extra=1001,
+  handle_duplicates="skip",
+)
 ```
 
 Retrieving an existing window can be done like this:
@@ -373,7 +387,7 @@ annotation_id = db.insert_annotation(
   label="wolf",
   label_type=LabelType.POSITIVE,
   provenance="me",
-  skip_duplicates=True,
+  handle_duplicates="skip",
 )
 ```
 

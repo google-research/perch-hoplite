@@ -86,7 +86,9 @@ def insert_random_embeddings(
     embedding = np.float32(rng.normal(size=emb_dim, loc=0, scale=0.1))
     offsets = rng.integers(0, 100, size=[1])
     offsets = [offsets[0], offsets[0] + window_size_s]
-    db.insert_window(recording_id, offsets, embedding)
+    db.insert_window(
+        recording_id, offsets, embedding, handle_duplicates='allow'
+    )
   db.commit()
 
 
@@ -117,6 +119,7 @@ def clone_embeddings(
     target_id = target_db.insert_window(
         recording_id=recording_id_mapping[window.recording_id],
         embedding=source_db.get_embedding(window.id),
+        handle_duplicates='allow',
         **window.to_kwargs(skip=['id', 'embedding', 'recording_id']),
     )
     window_id_mapping[window.id] = target_id
@@ -147,5 +150,6 @@ def add_random_labels(
         label=str(rng.choice(CLASS_LABELS)),
         label_type=label_type,
         provenance=provenance,
+        handle_duplicates='allow',
     )
   db.commit()

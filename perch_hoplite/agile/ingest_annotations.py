@@ -94,6 +94,7 @@ class AnnotatedDatasetIngestor:
                 label=label,
                 label_type=interface.LabelType.POSITIVE,
                 provenance=provenance,
+                handle_duplicates='allow',
             )
             lbl_counts[label] += 1
     lbl_count = sum(lbl_counts.values())

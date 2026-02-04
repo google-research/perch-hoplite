@@ -24,7 +24,7 @@ import itertools
 import json
 import re
 import sqlite3
-from typing import Any
+from typing import Any, Literal
 
 from absl import logging
 from etils import epath
@@ -395,8 +395,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             recording_id INTEGER NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
             offsets FLOAT_LIST NOT NULL,
-            UNIQUE (id, recording_id, offsets),
-            UNIQUE (recording_id, offsets)
+            UNIQUE (id, recording_id, offsets)
         )
         """)
 
@@ -885,6 +884,9 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       recording_id: int,
       offsets: list[float],
       embedding: np.ndarray | None = None,
+      handle_duplicates: Literal[
+          'allow', 'overwrite', 'skip', 'error'
+      ] = 'error',
       **kwargs: Any,
   ) -> int:
     """Insert a window into the database."""
@@ -895,22 +897,23 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
           f' got {embedding.shape[-1]}.'
       )
 
+    duplicate_id = self._handle_window_duplicates(
+        recording_id, offsets, handle_duplicates
+    )
+    if duplicate_id is not None:
+      return duplicate_id
+
     cursor = self._get_cursor()
     columns_str, placeholders_str, values = format_sql_insert_values(
         recording_id=recording_id,
         offsets=offsets,
         **kwargs,
     )
-    update_clause_str = format_sql_update_on_conflict(
-        *self._extra_table_columns['windows'].keys(),
-    )
     try:
       cursor.execute(
           f"""
           INSERT INTO windows {columns_str}
           VALUES {placeholders_str}
-          ON CONFLICT (recording_id, offsets)
-          {update_clause_str}
           """,
           values,
       )
@@ -938,6 +941,9 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       self,
       windows_batch: Sequence[dict[str, Any]],
       embeddings_batch: np.ndarray | None = None,
+      handle_duplicates: Literal[
+          'allow', 'overwrite', 'skip', 'error'
+      ] = 'error',
   ) -> Sequence[int]:
     """Insert a batch of windows into the database."""
 
@@ -950,16 +956,81 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
           f' got {embeddings_batch.shape[-1]}.'
       )
 
-    window_ids = [
-        self.insert_window(embedding=None, **window_kwargs)
-        for window_kwargs in windows_batch
-    ]
+    # Make sure that, unless we're in "allow" mode, there are no duplicates in
+    # the batch itself.
+    if handle_duplicates != 'allow':
+      for i in range(len(windows_batch)):
+        for j in range(i + 1, len(windows_batch)):
+          if windows_batch[i]['recording_id'] == windows_batch[j][
+              'recording_id'
+          ] and np.allclose(
+              windows_batch[i]['offsets'],
+              windows_batch[j]['offsets'],
+              rtol=0.0,
+              atol=1e-6,
+          ):
+            raise RuntimeError(
+                'Duplicates found in `windows_batch`, but this use case is not'
+                ' supported unless `handle_duplicates` is set to "allow"'
+                f' (handle_duplicates = "{handle_duplicates}").'
+            )
+
+    # Handle duplicates from the database.
+    window_ids = [-1] * len(windows_batch)
+    if handle_duplicates in ['overwrite', 'skip', 'error']:
+      keep_idx = []
+      remove_window_ids = set()
+
+      # Go over all windows in the batch and check: (1) which ones need to be
+      # removed, (2) which ones get a match and need to be skipped from
+      # insertion, (3) which ones trigger an error, and (4) which ones still
+      # need to be inserted.
+      for idx, window_kwargs in enumerate(windows_batch):
+        matches = self.get_all_windows(
+            filter=config_dict.create(
+                eq=dict(recording_id=window_kwargs['recording_id']),
+                approx=dict(offsets=window_kwargs['offsets']),
+            )
+        )
+        if matches:
+          if handle_duplicates == 'overwrite':
+            for match in matches:
+              remove_window_ids.add(match.id)
+            keep_idx.append(idx)
+          elif handle_duplicates == 'skip':
+            window_ids[idx] = matches[0].id
+          elif handle_duplicates == 'error':
+            raise RuntimeError(
+                f'Duplicate window found (id = {matches[0].id}), but'
+                ' `handle_duplicates` is set to "error".'
+            )
+        else:
+          keep_idx.append(idx)
+
+      # Now that no duplicates triggered an error, we can remove those that were
+      # overwritten.
+      for window_id in remove_window_ids:
+        self.remove_window(window_id)
+
+    else:
+      keep_idx = list(range(len(windows_batch)))
+
+    # Insert the windows that were not skipped and did not trigger an error.
+    for idx in keep_idx:
+      window_ids[idx] = self.insert_window(
+          embedding=None,
+          handle_duplicates='allow',
+          **windows_batch[idx],
+      )
 
     if embeddings_batch is not None:
       if not self._ui_loaded:
         self.ui.load()
         self._ui_loaded = True
-      self.ui.add(window_ids, embeddings_batch.astype(self._embedding_dtype))
+      self.ui.add(
+          np.array(window_ids)[keep_idx],
+          embeddings_batch[keep_idx].astype(self._embedding_dtype),
+      )
       self._ui_updated = True
 
     return window_ids
@@ -1070,22 +1141,18 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       label: str,
       label_type: interface.LabelType,
       provenance: str,
-      skip_duplicates: bool = False,
+      handle_duplicates: Literal[
+          'allow', 'overwrite', 'skip', 'error'
+      ] = 'error',
       **kwargs: Any,
   ) -> int:
     """Insert an annotation into the database."""
 
-    if skip_duplicates:
-      matches = self.get_all_annotations(
-          filter=config_dict.create(
-              eq=dict(
-                  recording_id=recording_id, label=label, label_type=label_type
-              ),
-              approx=dict(offsets=offsets),
-          )
-      )
-      if matches:
-        return matches[0].id
+    duplicate_id = self._handle_annotation_duplicates(
+        recording_id, offsets, label, label_type, provenance, handle_duplicates
+    )
+    if duplicate_id is not None:
+      return duplicate_id
 
     cursor = self._get_cursor()
     columns_str, placeholders_str, values = format_sql_insert_values(

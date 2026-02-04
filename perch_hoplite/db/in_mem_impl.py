@@ -21,7 +21,7 @@ import copy
 import dataclasses
 import datetime as dt
 import itertools
-from typing import Any
+from typing import Any, Literal
 
 from absl import logging
 from ml_collections import config_dict
@@ -351,12 +351,21 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
       recording_id: int,
       offsets: list[float],
       embedding: np.ndarray | None = None,
+      handle_duplicates: Literal[
+          'allow', 'overwrite', 'skip', 'error'
+      ] = 'error',
       **kwargs: Any,
   ) -> int:
     """Insert a window into the database."""
 
     if recording_id not in self._recordings:
       raise ValueError(f'Recording id not found: {recording_id}')
+
+    duplicate_id = self._handle_window_duplicates(
+        recording_id, offsets, handle_duplicates
+    )
+    if duplicate_id is not None:
+      return duplicate_id
 
     window_id = self._next_window_id
     self._windows[window_id] = interface.Window(
@@ -403,7 +412,9 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
       label: str,
       label_type: interface.LabelType,
       provenance: str,
-      skip_duplicates: bool = False,
+      handle_duplicates: Literal[
+          'allow', 'overwrite', 'skip', 'error'
+      ] = 'error',
       **kwargs: Any,
   ) -> int:
     """Insert an annotation into the database."""
@@ -411,21 +422,11 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
     if recording_id not in self._recordings:
       raise ValueError(f'Recording id not found: {recording_id}')
 
-    if skip_duplicates:
-      matches = self.get_all_annotations(
-          config_dict.create(
-              eq=dict(
-                  recording_id=recording_id,
-                  label=label,
-                  label_type=label_type,
-              ),
-              approx=dict(
-                  offsets=offsets,
-              ),
-          )
-      )
-      if matches:
-        return matches[0].id
+    duplicate_id = self._handle_annotation_duplicates(
+        recording_id, offsets, label, label_type, provenance, handle_duplicates
+    )
+    if duplicate_id is not None:
+      return duplicate_id
 
     annotation_id = self._next_annotation_id
     self._annotations[annotation_id] = interface.Annotation(

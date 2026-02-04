@@ -94,6 +94,7 @@ def duplicate_db(
   for annotation in tqdm.tqdm(source_db.get_all_annotations()):
     target_id = target_db.insert_annotation(
         window_id=window_id_mapping[annotation.window_id],
+        handle_duplicates='allow',
         **annotation.to_kwargs(skip=['id', 'window_id']),
     )
     annotation_id_mapping[annotation.id] = target_id

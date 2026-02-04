@@ -211,6 +211,7 @@ class ClassifierDataTest(absltest.TestCase):
           label=db_test_utils.CLASS_LABELS[lbl_idx],
           label_type=lbl_type,
           provenance='test',
+          handle_duplicates='allow',
       )
 
     with self.subTest('single_positive_label'):

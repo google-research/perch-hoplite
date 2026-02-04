@@ -21,7 +21,7 @@ from collections.abc import Sequence
 import dataclasses
 import datetime as dt
 import enum
-from typing import Any
+from typing import Any, Literal
 
 from ml_collections import config_dict
 import numpy as np
@@ -467,12 +467,65 @@ class HopliteDBInterface(abc.ABC):
       recording_id: The ID of the recording to remove.
     """
 
+  def _handle_window_duplicates(
+      self,
+      recording_id: int,
+      offsets: list[float],
+      handle_duplicates: Literal[
+          "allow", "overwrite", "skip", "error"
+      ] = "error",
+  ) -> int | None:
+    """Utility function to handle window duplicates in the database.
+
+    Args:
+      recording_id: The recording ID of potential window duplicates.
+      offsets: The offsets of potential window duplicates.
+      handle_duplicates: How to handle entries matching another database item's
+        (recording_id, offsets). If "allow", duplicates are left as they are and
+        `None` is returned. If "overwrite", duplicates are removed and `None` is
+        returned. If "skip", the ID of the first matching window is returned if
+        duplicates are found, otherwise `None` is returned. If "error", an error
+        is raised if duplicates are found, otherwise `None` is returned (this is
+        the default).
+
+    Returns:
+      The ID of the first matching window if `handle_duplicates` is "skip" and
+      duplicates are found, otherwise `None`.
+
+    Raises:
+      RuntimeError: If `handle_duplicates` is "error" and duplicates are found.
+    """
+
+    if handle_duplicates in ["overwrite", "skip", "error"]:
+      matches = self.get_all_windows(
+          filter=config_dict.create(
+              eq=dict(recording_id=recording_id),
+              approx=dict(offsets=offsets),
+          )
+      )
+      if matches:
+        if handle_duplicates == "overwrite":
+          for match in matches:
+            self.remove_window(match.id)
+        elif handle_duplicates == "skip":
+          return matches[0].id
+        elif handle_duplicates == "error":
+          raise RuntimeError(
+              f"Duplicate window found (id = {matches[0].id}), but"
+              ' `handle_duplicates` is set to "error".'
+          )
+
+    return None
+
   @abc.abstractmethod
   def insert_window(
       self,
       recording_id: int,
       offsets: list[float],
       embedding: np.ndarray | None = None,
+      handle_duplicates: Literal[
+          "allow", "overwrite", "skip", "error"
+      ] = "error",
       **kwargs: Any,
   ) -> int:
     """Insert a window into the database.
@@ -482,16 +535,29 @@ class HopliteDBInterface(abc.ABC):
       offsets: The offsets of the window.
       embedding: The embedding vector. If None, no embedding vector is inserted
         into the database for this particular window.
+      handle_duplicates: How to handle entries matching another database item's
+        (recording_id, offsets). If "allow", duplicates are allowed. If
+        "overwrite", the new window overwrites the old one. If "skip", the old
+        window is kept. If "error", an error is raised if duplicates are found
+        (this is the default).
       **kwargs: Additional keyword arguments to pass to the window.
 
     Returns:
-      The ID of the inserted window.
+      The ID of the inserted window (if `handle_duplicates` is "allow" or
+      "overwrite"), or the ID of the first matching window (if
+      `handle_duplicates` is "skip").
+
+    Raises:
+      RuntimeError: If `handle_duplicates` is "error" and duplicates are found.
     """
 
   def insert_windows_batch(
       self,
       windows_batch: Sequence[dict[str, Any]],
       embeddings_batch: np.ndarray | None = None,
+      handle_duplicates: Literal[
+          "allow", "overwrite", "skip", "error"
+      ] = "error",
   ) -> Sequence[int]:
     """Insert a batch of windows into the database.
 
@@ -501,14 +567,50 @@ class HopliteDBInterface(abc.ABC):
         `embedding` argument.
       embeddings_batch: A batch of embedding vectors for the given windows. If
         None, no embedding vectors are inserted into the database.
+      handle_duplicates: How to handle entries matching another database item's
+        (recording_id, offsets). If "allow", duplicates are allowed. If
+        "overwrite", the new window overwrites the old one. If "skip", the old
+        window is kept. If "error", an error is raised if duplicates are found
+        (this is the default).
 
     Returns:
-      A sequence of IDs of the inserted windows.
+      A sequence of IDs of inserted and/or matching windows, determined by
+      `handle_duplicates`. See the return value of `insert_window()` for more
+      details.
+
+    Raises:
+      RuntimeError: If `handle_duplicates` is "error" and duplicates are found,
+        or if `handle_duplicates` is not "allow" and there are duplicates in
+        `windows_batch` itself.
     """
 
+    # Make sure that, unless we're in "allow" mode, there are no duplicates in
+    # the batch itself.
+    if handle_duplicates != "allow":
+      for i in range(len(windows_batch)):
+        for j in range(i + 1, len(windows_batch)):
+          if windows_batch[i]["recording_id"] == windows_batch[j][
+              "recording_id"
+          ] and np.allclose(
+              windows_batch[i]["offsets"],
+              windows_batch[j]["offsets"],
+              rtol=0.0,
+              atol=1e-6,
+          ):
+            raise RuntimeError(
+                "Duplicates found in `windows_batch`, but this use case is not"
+                ' supported unless `handle_duplicates` is set to "allow"'
+                f' (handle_duplicates = "{handle_duplicates}").'
+            )
+
+    # Insert the windows one by one, in the order they are given.
     window_ids = []
     for window_kwargs, embedding in zip(windows_batch, embeddings_batch):
-      window_id = self.insert_window(embedding=embedding, **window_kwargs)
+      window_id = self.insert_window(
+          embedding=embedding,
+          handle_duplicates=handle_duplicates,
+          **window_kwargs,
+      )
       window_ids.append(window_id)
     return window_ids
 
@@ -561,6 +663,69 @@ class HopliteDBInterface(abc.ABC):
       window_id: The ID of the window to remove.
     """
 
+  def _handle_annotation_duplicates(
+      self,
+      recording_id: int,
+      offsets: list[float],
+      label: str,
+      label_type: LabelType,
+      provenance: str,
+      handle_duplicates: Literal[
+          "allow", "overwrite", "skip", "error"
+      ] = "error",
+  ) -> int | None:
+    """Utility function to handle annotation duplicates in the database.
+
+    Args:
+      recording_id: The recording ID of potential annotation duplicates.
+      offsets: The offsets of potential annotation duplicates.
+      label: The label of potential annotation duplicates.
+      label_type: The label type of potential annotation duplicates.
+      provenance: The provenance of potential annotation duplicates.
+      handle_duplicates: How to handle entries matching another database item's
+        (recording_id, offsets, label, label_type, provenance). If "allow",
+        duplicates are left as they are and `None` is returned. If "overwrite",
+        duplicates are removed and `None` is returned. If "skip", the ID of the
+        first matching annotation is returned if duplicates are found, otherwise
+        `None` is returned. If "error", an error is raised if duplicates are
+        found, otherwise `None` is returned (this is the default).
+
+    Returns:
+      The ID of the first matching annotation if `handle_duplicates` is "skip"
+      and duplicates are found, otherwise `None`.
+
+    Raises:
+      RuntimeError: If `handle_duplicates` is "error" and duplicates are found.
+    """
+
+    if handle_duplicates in ["overwrite", "skip", "error"]:
+      matches = self.get_all_annotations(
+          filter=config_dict.create(
+              eq=dict(
+                  recording_id=recording_id,
+                  label=label,
+                  label_type=label_type,
+                  provenance=provenance,
+              ),
+              approx=dict(
+                  offsets=offsets,
+              ),
+          )
+      )
+      if matches:
+        if handle_duplicates == "overwrite":
+          for match in matches:
+            self.remove_annotation(match.id)
+        elif handle_duplicates == "skip":
+          return matches[0].id
+        elif handle_duplicates == "error":
+          raise RuntimeError(
+              f"Duplicate annotation found (id = {matches[0].id}), but"
+              ' `handle_duplicates` is set to "error".'
+          )
+
+    return None
+
   @abc.abstractmethod
   def insert_annotation(
       self,
@@ -569,7 +734,9 @@ class HopliteDBInterface(abc.ABC):
       label: str,
       label_type: LabelType,
       provenance: str,
-      skip_duplicates: bool = False,
+      handle_duplicates: Literal[
+          "allow", "overwrite", "skip", "error"
+      ] = "error",
       **kwargs: Any,
   ) -> int:
     """Insert an annotation into the database.
@@ -580,15 +747,20 @@ class HopliteDBInterface(abc.ABC):
       label: The annotation label.
       label_type: The type of label (e.g. positive or negative).
       provenance: The provenance of the annotation.
-      skip_duplicates: If True and another annotation with the same
-        (recording_id, offsets, label, label_type) already exists in the
-        database, return the id (or one of the ids) of that matching annotation.
-        Otherwise, the annotation is inserted regardless of duplicates.
+      handle_duplicates: How to handle entries matching another database item's
+        (recording_id, offsets, label, label_type, provenance). If "allow",
+        duplicates are allowed. If "overwrite", the new annotation overwrites
+        the old one. If "skip", the old annotation is kept. If "error", an error
+        is raised if duplicates are found (this is the default).
       **kwargs: Additional keyword arguments to pass to the annotation.
 
     Returns:
-      The ID of the inserted annotation, or of the matching annotation if it
-      already exists and `skip_duplicates` is True.
+      The ID of the inserted annotation (if `handle_duplicates` is "allow" or
+      "overwrite"), or the ID of the first matching annotation (if
+      `handle_duplicates` is "skip").
+
+    Raises:
+      RuntimeError: If `handle_duplicates` is "error" and duplicates are found.
     """
 
   @abc.abstractmethod

@@ -253,7 +253,7 @@ class HopliteTest(parameterized.TestCase):
           label='unique',
           label_type=interface.LabelType.POSITIVE,
           provenance='human',
-          skip_duplicates=True,
+          handle_duplicates='skip',
       )
       self.assertEqual(annotation_id, dupe_annotation_id)
 

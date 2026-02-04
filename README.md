@@ -2,16 +2,6 @@
 
 ![CI](https://github.com/google-research/perch-hoplite/actions/workflows/ci_uv.yml/badge.svg)
 
-> **Note:** Hoplite is currently going through a major API redesign and some
-> parts are still moving.
->
-> For non-critical work or if you want to see what's coming, try the latest code
-> from this repo.
->
-> If you've used Hoplite before, make sure you only install `perch-hoplite<1.0`
-> for now, and wait for this note to be removed. We are aiming to release a
-> stable version 1.0.0 in January 2026.
-
 Hoplite is a system for storing large volumes of embeddings from machine
 perception models. We focus on combining vector search with active learning
 workflows, aka [agile modeling](https://arxiv.org/abs/2505.03071).

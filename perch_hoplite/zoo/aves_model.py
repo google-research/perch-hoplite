@@ -31,9 +31,8 @@ from jaxonnxruntime.core import handler
 from jaxonnxruntime.core import onnx_node
 from ml_collections.config_dict import config_dict
 import numpy as np
-from perch_hoplite.zoo import zoo_interface
-
 import onnx
+from perch_hoplite.zoo import zoo_interface
 
 
 @handler.register_op('InstanceNormalization')

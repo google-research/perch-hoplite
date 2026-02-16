@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2025 The Perch Authors.
+# Copyright 2026 The Perch Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -39,7 +39,7 @@ BASE_KAGGLE_URL = 'https://www.kaggle.com/models/'
 PERCH_V1_SLUG = PERCH_SLUG + 'bird-vocalization-classifier'
 PERCH_V2_SLUG = PERCH_SLUG + 'perch_v2'
 PERCH_V2_CPU_SLUG = PERCH_SLUG + 'perch_v2_cpu'
-SURFPERCH_SLUG = 'google/surfperch/tensorFlow2/TensorFlow2/1'
+SURFPERCH_SLUG = 'google/surfperch/TensorFlow2/1'
 HUMPBACK_SLUG = 'google/humpback-whale/tensorFlow2/humpback-whale'
 MULTISPECIES_WHALE_SLUG = 'google/multispecies-whale/tensorFlow2/default'
 YAMNET_SLUG = 'google/yamnet'

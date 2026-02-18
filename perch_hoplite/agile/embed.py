@@ -79,20 +79,6 @@ def process_source_id(
   ):
     return
 
-  embs = db.match_window_ids(
-      deployments_filter=config_dict.create(
-          eq=dict(project=source_id.dataset_name)
-      ),
-      recordings_filter=config_dict.create(eq=dict(filename=source_id.file_id)),
-      windows_filter=config_dict.create(
-          approx=dict(
-              offsets=[source_id.offset_s, source_id.offset_s + window_size_s],
-          )
-      ),
-  )
-  if embs:
-    return
-
   outputs = worker.embedding_model.embed(audio_array)
   logits_key = state['worker'].model_config.logits_key
   if logits_key is None:
@@ -307,11 +293,19 @@ class EmbedWorker:
     )
     return bool(embs)
 
-  def process_all(self, target_dataset_name: str | None = None, batch_size=32):
+  def process_all(
+      self,
+      target_dataset_name: str | None = None,
+      batch_size=32,
+      handle_duplicates='error',
+  ):
     """Process all audio examples."""
 
     # Update model config and audio sources in the database.
     self.update_configs()
+    if self.db.count_embeddings() == 0:
+      # No chance of duplicates, so we can use "allow" mode.
+      handle_duplicates = 'allow'
 
     # Create missing deployments and recordings in the database.
     source_id_to_deployment_id = {}
@@ -372,14 +366,19 @@ class EmbedWorker:
         for result in got:
           if result is None:
             continue
-          for source, offsets, embedding in zip(*result):
-            source_id = source.to_id()
-            recording_id = source_id_to_recording_id[source_id]
-            self.db.insert_window(
-                recording_id=recording_id,
-                embedding=embedding,
-                offsets=offsets,
-            )
+          windows_batch = [
+              {
+                  'recording_id': source_id_to_recording_id[s.to_id()],
+                  'offsets': o,
+              }
+              for s, o, _ in zip(*result)
+          ]
+          embeddings_batch = np.array(result[2])
+          self.db.insert_windows_batch(
+              windows_batch,
+              embeddings_batch,
+              handle_duplicates=handle_duplicates,
+          )
 
     # Commit all changes for windows to the database.
     self.db.commit()

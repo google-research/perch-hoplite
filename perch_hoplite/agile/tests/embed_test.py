@@ -86,6 +86,8 @@ class EmbedTest(absltest.TestCase):
       self.assertEqual(db.count_embeddings(), 36)
       embs = db.get_embeddings_batch(db.match_window_ids())
       self.assertEqual(embs.shape[-1], 32)
+      self.assertLen(db.get_all_deployments(), 2)
+      self.assertLen(db.get_all_recordings(), 6)
 
       # Check that the metadata is set correctly.
       got_md = db.get_metadata(key=None)

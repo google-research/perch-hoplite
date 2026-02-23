@@ -17,6 +17,7 @@
 
 from concurrent import futures
 import dataclasses
+import functools
 import itertools
 import threading
 
@@ -65,8 +66,9 @@ def process_source_id(
 ):
   """Process a single audio source."""
   worker = state['worker']
-  name = threading.current_thread().name
-  db = state[name + 'db']
+  # To access the thread-specific DB, we need to use the thread name.
+  # name = threading.current_thread().name
+  # db = state[name + 'db']
   glob = worker.audio_globs[source_id.dataset_name]
   target_sample_rate = worker.get_sample_rate_hz(source_id)
   audio_array = worker.load_audio(source_id)
@@ -200,6 +202,133 @@ class EmbedWorker:
     self._update_audio_sources()
     self.db.commit()
 
+  @functools.cache  # pylint: disable=method-cache-max-size-none
+  def _get_or_insert_deployment_id(
+      self,
+      deployment_name: str,
+      project_name: str,
+  ) -> int:
+    """Get the deployment ID for the given deployment name and project name."""
+    deployments = self.db.get_all_deployments(
+        config_dict.create(eq=dict(name=deployment_name, project=project_name))
+    )
+    if not deployments:
+      return self.db.insert_deployment(
+          name=deployment_name, project=project_name
+      )
+    else:
+      return deployments[0].id
+
+  @functools.cache  # pylint: disable=method-cache-max-size-none
+  def _get_or_insert_recording_id(
+      self,
+      filename: str,
+      deployment_id: int,
+  ) -> tuple[int, bool]:
+    """Get the recording ID, and indicate whether it was newly inserted."""
+    recordings = self.db.get_all_recordings(
+        config_dict.create(
+            eq=dict(filename=filename, deployment_id=deployment_id)
+        )
+    )
+    if not recordings:
+      return (
+          self.db.insert_recording(
+              filename=filename, deployment_id=deployment_id
+          ),
+          True,
+      )
+    else:
+      return recordings[0].id, False
+
+  def add_deployments(self, target_dataset_name: str | None = None):
+    """Add deployments to db and create a source ID to deployment ID mapping."""
+    # Create missing deployments in the database.
+    for source in self.audio_sources.iterate_all_sources(target_dataset_name):
+      self._get_or_insert_deployment_id(
+          deployment_name=source.deployment_name_from_file_id(),
+          project_name=source.dataset_name,
+      )
+    self.db.commit()
+
+  def add_recordings(self, target_dataset_name: str | None = None) -> set[int]:
+    """Add recordings to db and create a source ID to recording ID mapping."""
+    new_recordings = set([])
+    for source in self.audio_sources.iterate_all_sources(target_dataset_name):
+      deployment_id = self._get_or_insert_deployment_id(
+          source.deployment_name_from_file_id(), source.dataset_name
+      )
+      recording_id, is_new = self._get_or_insert_recording_id(
+          source.file_id, deployment_id
+      )
+      if is_new:
+        new_recordings.add(recording_id)
+    self.db.commit()
+    return new_recordings
+
+  def add_annotations(self):
+    pass
+
+  def embed_dataset(
+      self,
+      batch_size=32,
+      handle_duplicates: str = 'error',
+      target_dataset_name: str | None = None,
+      new_recordings: set[int] | None = None,
+  ):
+    """Embed audio examples from the given dataset."""
+    # Process all sources.
+    state = {}
+    state['db'] = self.db
+    state['worker'] = self
+    state['new_recordings'] = new_recordings
+    with futures.ThreadPoolExecutor(
+        max_workers=self.audio_worker_threads,
+        initializer=worker_initializer,
+        initargs=(state,),
+    ) as executor:
+      source_iterator = self.audio_sources.iterate_all_sources(
+          target_dataset_name
+      )
+      for source_ids_batch in batched(source_iterator, batch_size):
+        got = executor.map(
+            process_source_id,
+            itertools.repeat(state),
+            source_ids_batch,
+            itertools.repeat(self.window_size_s),
+        )
+        # TODO(tomdenton): Consider using a db writer thread to avoid blocking.
+        for result in got:
+          if result is None:
+            continue
+          recording_ids = []
+          for s in result[0]:
+            deployment_id = self._get_or_insert_deployment_id(
+                s.deployment_name_from_file_id(), s.dataset_name
+            )
+            recording_id, _ = self._get_or_insert_recording_id(
+                s.file_id, deployment_id
+            )
+            recording_ids.append(recording_id)
+          if all(r in new_recordings for r in recording_ids):
+            dupe_strategy = 'allow'
+          else:
+            dupe_strategy = handle_duplicates
+          windows_batch = [
+              {
+                  'recording_id': recording_ids[i],
+                  'offsets': o,
+              }
+              for i, (_, o, _) in enumerate(zip(*result))
+          ]
+          embeddings_batch = np.array(result[2])
+          self.db.insert_windows_batch(
+              windows_batch,
+              embeddings_batch,
+              handle_duplicates=dupe_strategy,
+          )
+    self.db.commit()
+
   def get_sample_rate_hz(self, source_id: source_info.SourceId) -> int:
     """Get the sample rate of the embedding model."""
     dataset_name = source_id.dataset_name
@@ -268,31 +397,6 @@ class EmbedWorker:
       raise ValueError('Invalid target_sample_rate.')
     return model_hop_size_s * model_sample_rate / audio_sample_rate
 
-  def embedding_exists(
-      self,
-      source_id: source_info.SourceId,
-      window_size_s: float,
-  ) -> bool:
-    """Check whether embeddings already exist for the given source ID."""
-    embs = self.db.match_window_ids(
-        deployments_filter=config_dict.create(
-            eq=dict(project=source_id.dataset_name)
-        ),
-        recordings_filter=config_dict.create(
-            eq=dict(filename=source_id.file_id)
-        ),
-        windows_filter=config_dict.create(
-            approx=dict(
-                offsets=[
-                    source_id.offset_s,
-                    source_id.offset_s + window_size_s,
-                ],
-            )
-        ),
-        limit=1,
-    )
-    return bool(embs)
-
   def process_all(
       self,
       target_dataset_name: str | None = None,
@@ -307,78 +411,18 @@ class EmbedWorker:
       # No chance of duplicates, so we can use "allow" mode.
       handle_duplicates = 'allow'
 
-    # Create missing deployments and recordings in the database.
-    source_id_to_deployment_id = {}
-    source_id_to_recording_id = {}
-    for source in self.audio_sources.iterate_all_sources(target_dataset_name):
-      source_id = source.to_id()
-
-      deployments = self.db.get_all_deployments(
-          config_dict.create(eq=dict(project=source.dataset_name))
-      )
-      if not deployments:
-        deployment_id = self.db.insert_deployment(
-            name=source.dataset_name, project=source.dataset_name
-        )
-      else:
-        deployment_id = deployments[0].id
-      source_id_to_deployment_id[source_id] = deployment_id
-
-      recordings = self.db.get_all_recordings(
-          config_dict.create(
-              eq=dict(
-                  filename=source.file_id,
-                  deployment_id=deployment_id,
-              )
-          )
-      )
-      if not recordings:
-        recording_id = self.db.insert_recording(
-            filename=source.file_id, deployment_id=deployment_id
-        )
-      else:
-        recording_id = recordings[0].id
-      source_id_to_recording_id[source_id] = recording_id
-
-    # Commit all changes for deployments and recordings to the database.
-    self.db.commit()
-
-    # Process all sources.
-    state = {}
-    state['db'] = self.db
-    state['worker'] = self
-    with futures.ThreadPoolExecutor(
-        max_workers=self.audio_worker_threads,
-        initializer=worker_initializer,
-        initargs=(state,),
-    ) as executor:
-      source_iterator = self.audio_sources.iterate_all_sources(
-          target_dataset_name
-      )
-      for source_ids_batch in batched(source_iterator, batch_size):
-        got = executor.map(
-            process_source_id,
-            itertools.repeat(state),
-            source_ids_batch,
-            itertools.repeat(self.window_size_s),
-        )
-        # TODO(tomdenton): Consider using a db writer thread to avoid blocking.
-        for result in got:
-          if result is None:
-            continue
-          windows_batch = [
-              {
-                  'recording_id': source_id_to_recording_id[s.to_id()],
-                  'offsets': o,
-              }
-              for s, o, _ in zip(*result)
-          ]
-          embeddings_batch = np.array(result[2])
-          self.db.insert_windows_batch(
-              windows_batch,
-              embeddings_batch,
-              handle_duplicates=handle_duplicates,
-          )
-
-    # Commit all changes for windows to the database.
+    # Add deployments and recordings to the database.
+    print('\nAdding deployments...')
+    self.add_deployments(target_dataset_name)
+    print('\nAdding recordings...')
+    new_recordings = self.add_recordings(target_dataset_name)
+    print('\nAdding annotations...')
+    self.add_annotations()
+    print('\nEmbedding audio...')
+    self.embed_dataset(
+        batch_size=batch_size,
+        handle_duplicates=handle_duplicates,
+        target_dataset_name=target_dataset_name,
+        new_recordings=new_recordings,
+    )
     self.db.commit()

@@ -19,6 +19,7 @@ from concurrent import futures
 import dataclasses
 import functools
 import itertools
+import os
 import threading
 
 from absl import logging
@@ -26,6 +27,7 @@ import audioread
 from ml_collections import config_dict
 import numpy as np
 from perch_hoplite import audio_io
+from perch_hoplite.agile import metadata
 from perch_hoplite.agile import source_info
 from perch_hoplite.db import interface as hoplite_interface
 from perch_hoplite.zoo import model_configs
@@ -142,6 +144,10 @@ class EmbedWorker:
     self.audio_globs = {
         g.dataset_name: g for g in self.audio_sources.audio_globs
     }
+    self.metadata = {
+        g.dataset_name: metadata.AgileMetadata.from_directory(g.base_path)
+        for g in self.audio_sources.audio_globs
+    }
 
   def _log_error(self, source_id, exception, counter_name):
     logging.warning(
@@ -213,8 +219,11 @@ class EmbedWorker:
         config_dict.create(eq=dict(name=deployment_name, project=project_name))
     )
     if not deployments:
+      md = self.metadata[project_name].get_deployment_metadata(deployment_name)
       return self.db.insert_deployment(
-          name=deployment_name, project=project_name
+          name=deployment_name,
+          project=project_name,
+          **md,
       )
     else:
       return deployments[0].id
@@ -224,6 +233,7 @@ class EmbedWorker:
       self,
       filename: str,
       deployment_id: int,
+      dataset_name: str,
   ) -> tuple[int, bool]:
     """Get the recording ID, and indicate whether it was newly inserted."""
     recordings = self.db.get_all_recordings(
@@ -232,9 +242,12 @@ class EmbedWorker:
         )
     )
     if not recordings:
+      md = self.metadata[dataset_name].get_recording_metadata(filename)
       return (
           self.db.insert_recording(
-              filename=filename, deployment_id=deployment_id
+              filename=filename,
+              deployment_id=deployment_id,
+              **md,
           ),
           True,
       )
@@ -245,8 +258,9 @@ class EmbedWorker:
     """Add deployments to db and create a source ID to deployment ID mapping."""
     # Create missing deployments in the database.
     for source in self.audio_sources.iterate_all_sources(target_dataset_name):
+      deployment_name = source.deployment_name_from_file_id()
       self._get_or_insert_deployment_id(
-          deployment_name=source.deployment_name_from_file_id(),
+          deployment_name=deployment_name,
           project_name=source.dataset_name,
       )
     self.db.commit()
@@ -256,18 +270,53 @@ class EmbedWorker:
     new_recordings = set([])
     for source in self.audio_sources.iterate_all_sources(target_dataset_name):
       deployment_id = self._get_or_insert_deployment_id(
-          source.deployment_name_from_file_id(), source.dataset_name
+          deployment_name=source.deployment_name_from_file_id(),
+          project_name=source.dataset_name,
       )
       recording_id, is_new = self._get_or_insert_recording_id(
-          source.file_id, deployment_id
+          source.file_id,
+          deployment_id,
+          source.dataset_name,
       )
       if is_new:
         new_recordings.add(recording_id)
     self.db.commit()
     return new_recordings
 
-  def add_annotations(self):
-    pass
+  def add_annotations(self, target_dataset_name: str | None = None):
+    """Add annotations from metadata to db."""
+    dataset_names = self.metadata.keys()
+    if target_dataset_name is not None:
+      dataset_names = [target_dataset_name]
+
+    for dataset_name in dataset_names:
+      if dataset_name not in self.metadata:
+        continue
+      agile_md = self.metadata[dataset_name]
+      if not agile_md.annotations:
+        continue
+      for file_id, annotation_list in agile_md.annotations.items():
+        depl_name = os.path.split(file_id)[0]
+        if not depl_name:
+          logging.warning(
+              'Could not get deployment name from file_id %s, skipping.',
+              file_id,
+          )
+          continue
+        depl_id = self._get_or_insert_deployment_id(depl_name, dataset_name)
+        rec_id, _ = self._get_or_insert_recording_id(
+            file_id, depl_id, dataset_name
+        )
+        for annotation in annotation_list:
+          self.db.insert_annotation(
+              rec_id,
+              annotation.offsets,
+              annotation.label,
+              annotation.label_type,
+              provenance=annotation.provenance,
+              handle_duplicates='skip',
+          )
+    self.db.commit()
 
   def embed_dataset(
       self,
@@ -307,7 +356,7 @@ class EmbedWorker:
                 s.deployment_name_from_file_id(), s.dataset_name
             )
             recording_id, _ = self._get_or_insert_recording_id(
-                s.file_id, deployment_id
+                s.file_id, deployment_id, s.dataset_name
             )
             recording_ids.append(recording_id)
           if all(r in new_recordings for r in recording_ids):

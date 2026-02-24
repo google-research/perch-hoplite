@@ -15,6 +15,7 @@
 
 """Tests for embedding audio."""
 
+import os
 import shutil
 import tempfile
 
@@ -43,6 +44,28 @@ class EmbedTest(absltest.TestCase):
     classes = ['pos', 'neg']
     filenames = ['foo', 'bar', 'baz']
     test_utils.make_wav_files(self.tempdir, classes, filenames, file_len_s=6.0)
+
+    # Create metadata files.
+    with open(os.path.join(self.tempdir, 'metadata_description.csv'), 'w') as f:
+      f.write(
+          'field_name,metadata_level,type,description\n'
+          'deployment_id,deployment,str,Deployment identifier.\n'
+          'habitat,deployment,str,Habitat type.\n'
+          'file_id,recording,str,Recording identifier.\n'
+          'mic_type,recording,str,Microphone type.\n'
+      )
+    with open(os.path.join(self.tempdir, 'deployments_metadata.csv'), 'w') as f:
+      f.write('deployment_id,habitat\npos,forest\nneg,grassland\n')
+    with open(os.path.join(self.tempdir, 'recordings_metadata.csv'), 'w') as f:
+      f.write(
+          'file_id,mic_type\n'
+          'pos/foo.wav,MicA\n'
+          'pos/bar.wav,MicA\n'
+          'pos/baz.wav,MicB\n'
+          'neg/foo.wav,MicA\n'
+          'neg/bar.wav,MicB\n'
+          'neg/baz.wav,MicB\n'
+      )
 
     aduio_sources = source_info.AudioSources(
         audio_globs=(
@@ -88,6 +111,20 @@ class EmbedTest(absltest.TestCase):
       self.assertEqual(embs.shape[-1], 32)
       self.assertLen(db.get_all_deployments(), 2)
       self.assertLen(db.get_all_recordings(), 6)
+
+      # Check that metadata got attached to deployments and recordings.
+      deployments = db.get_all_deployments()
+      for d in deployments:
+        if d.name == 'pos':
+          self.assertEqual(d.habitat, 'forest')
+        elif d.name == 'neg':
+          self.assertEqual(d.habitat, 'grassland')
+      recordings = db.get_all_recordings()
+      for r in recordings:
+        if r.filename == 'pos/foo.wav':
+          self.assertEqual(r.mic_type, 'MicA')
+        elif r.filename == 'pos/baz.wav':
+          self.assertEqual(r.mic_type, 'MicB')
 
       # Check that the metadata is set correctly.
       got_md = db.get_metadata(key=None)

@@ -109,20 +109,21 @@ class EmbeddingDisplayTest(absltest.TestCase):
     bar_button = disp.widgets['bar']
     self.assertIsNotNone(foo_button)
     self.assertIsNotNone(bar_button)
-    # Buttons start with value 0, indicating no label.
-    # Clicking each button cycles 0 -> 1 -> -1 -> 0.
-    self.assertEqual(foo_button.value, 0)
-    self.assertEqual(bar_button.value, 0)
+    # Buttons start with `None` value, indicating no label.
+    # Clicking each button cycles None => POSITIVE => NEGATIVE => UNCERTAIN
+    # => None.
+    self.assertIsNone(foo_button.value)
+    self.assertIsNone(bar_button.value)
     self.assertEmpty(disp.harvest_labels('test_provenance'))
     foo_button.click()
-    self.assertEqual(foo_button.value, 1)
-    self.assertEqual(bar_button.value, 0)
+    self.assertEqual(foo_button.value, interface.LabelType.POSITIVE)
+    self.assertIsNone(bar_button.value)
     bar_button.click()
-    self.assertEqual(foo_button.value, 1)
-    self.assertEqual(bar_button.value, 1)
+    self.assertEqual(foo_button.value, interface.LabelType.POSITIVE)
+    self.assertEqual(bar_button.value, interface.LabelType.POSITIVE)
     foo_button.click()
-    self.assertEqual(foo_button.value, -1)
-    self.assertEqual(bar_button.value, 1)
+    self.assertEqual(foo_button.value, interface.LabelType.NEGATIVE)
+    self.assertEqual(bar_button.value, interface.LabelType.POSITIVE)
     labels = disp.harvest_labels('test_provenance')
     self.assertLen(labels, 2)
     self.assertEqual(labels[0].recording_id, 234)
@@ -138,14 +139,20 @@ class EmbeddingDisplayTest(absltest.TestCase):
     self.assertEqual(labels[1].provenance, 'test_provenance')
 
     bar_button.click()
-    self.assertEqual(foo_button.value, -1)
-    self.assertEqual(bar_button.value, -1)
+    self.assertEqual(foo_button.value, interface.LabelType.NEGATIVE)
+    self.assertEqual(bar_button.value, interface.LabelType.NEGATIVE)
     foo_button.click()
-    self.assertEqual(foo_button.value, 0)
-    self.assertEqual(bar_button.value, -1)
+    self.assertEqual(foo_button.value, interface.LabelType.UNCERTAIN)
+    self.assertEqual(bar_button.value, interface.LabelType.NEGATIVE)
+    foo_button.click()
+    self.assertIsNone(foo_button.value)
+    self.assertEqual(bar_button.value, interface.LabelType.NEGATIVE)
     bar_button.click()
-    self.assertEqual(foo_button.value, 0)
-    self.assertEqual(bar_button.value, 0)
+    self.assertIsNone(foo_button.value)
+    self.assertEqual(bar_button.value, interface.LabelType.UNCERTAIN)
+    bar_button.click()
+    self.assertIsNone(foo_button.value)
+    self.assertIsNone(bar_button.value)
 
   def test_embedding_display_group(self):
     classes = ['pos', 'neg']

@@ -403,6 +403,25 @@ Removing an existing recording can be done like this:
 db.remove_annotation(annotation_id=2)
 ```
 
+### Ingesting Ground Truth Annotations
+
+If you're working with one of the predefined datasets in
+`perch_hoplite/agile/ingest_annotations.py` and you'd like to ingest all ground
+truth annotations into the database, you can use Hoplite utilities like this:
+
+```python
+from perch_hoplite.agile import ingest_annotations
+
+ingestor = ingest_annotations.PRESETS[dataset_name]
+class_counts = ingestor.ingest_dataset(db)
+db.commit()
+```
+
+Currently, the following datasets have annotations ingestors in Hoplite:
+`anuraset`, `coffee_farms`, `hawaii`, `high_sierras`, `peru`, `powdermill`,
+`sierras_kahl`, `ssw`. Their audio files and annotations are stored in GCP at
+[`gs://chirp-public-bucket/soundscapes`](http://console.cloud.google.com/storage/browser/chirp-public-bucket/soundscapes).
+
 ### Working with Filters
 
 While working with complex metadata in Hoplite, a lot of scenarios may involve

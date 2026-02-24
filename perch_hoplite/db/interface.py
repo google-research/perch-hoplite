@@ -221,9 +221,10 @@ class Window(DynamicInfo):
   embedding: np.ndarray | None
 
 
-class LabelType(enum.Enum):
+class LabelType(int, enum.Enum):
   NEGATIVE = 0
   POSITIVE = 1
+  UNCERTAIN = 2
 
 
 @dataclasses.dataclass(init=False, repr=False, eq=False)
@@ -376,6 +377,9 @@ class HopliteDBInterface(abc.ABC):
 
     Returns:
       A ConfigDict containing the metadata.
+
+    Raises:
+      KeyError: If `key` is not found in the metadata table.
     """
 
   @abc.abstractmethod
@@ -384,6 +388,9 @@ class HopliteDBInterface(abc.ABC):
 
     Args:
       key: String for metadata key to remove. If None, removes all metadata.
+
+    Raises:
+      KeyError: If `key` is not found in the metadata table.
     """
 
   @abc.abstractmethod

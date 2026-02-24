@@ -15,13 +15,14 @@
 
 """Object wrapping an embedded audio example for display."""
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 import dataclasses
 import functools
 
 import IPython
 from IPython.display import clear_output  # pylint: disable=g-importing-member
 from IPython.display import display as ipy_display  # pylint: disable=g-importing-member
+from IPython.display import HTML  # pylint: disable=g-importing-member
 import ipywidgets
 import librosa
 from librosa import display as librosa_display
@@ -164,29 +165,53 @@ class EmbeddingDisplay:
   audio: np.ndarray | None = None
   spectrogram: np.ndarray | None = None
   labels: Sequence[interface.Annotation] = ()
+  init_label_type: interface.LabelType | None = None
+
+  LABEL_TYPE_TO_BUTTON_INFO = {
+      None: dict(icon='', button_style=''),
+      interface.LabelType.POSITIVE: dict(
+          icon='plus-circle', button_style='success'
+      ),
+      interface.LabelType.NEGATIVE: dict(
+          icon='minus-circle', button_style='warning'
+      ),
+      interface.LabelType.UNCERTAIN: dict(
+          icon='question-circle', button_style='info'
+      ),
+  }
 
   def _make_label_button(self, button_label: str) -> ipywidgets.Button:
     """Create an ipywidget button for the given label."""
 
     def button_callback(x):
-      if x.value == 0:
-        x.value = 1
+      if x.value is None:  # uninitialized => positive
+        x.value = interface.LabelType.POSITIVE
+        x.icon = 'plus-circle'
         x.button_style = 'success'
-      elif x.value == 1:
+      elif x.value == interface.LabelType.POSITIVE:  # positive => negative
+        x.value = interface.LabelType.NEGATIVE
+        x.icon = 'minus-circle'
         x.button_style = 'warning'
-        x.value = -1
-      elif x.value == -1:
+      elif x.value == interface.LabelType.NEGATIVE:  # negative => uncertain
+        x.value = interface.LabelType.UNCERTAIN
+        x.icon = 'question-circle'
+        x.button_style = 'info'
+      elif (
+          x.value == interface.LabelType.UNCERTAIN
+      ):  # uncertain => uninitialized
+        x.value = None
+        x.icon = ''
         x.button_style = ''
-        x.value = 0
       else:
         raise ValueError(f'Unexpected button value: {x.value}')
 
+    button_info = self.LABEL_TYPE_TO_BUTTON_INFO[self.init_label_type]
     button = ipywidgets.Button(
         description=button_label,
-        disabled=False,
-        button_style='',
+        icon=button_info['icon'],
+        button_style=button_info['button_style'],
     )
-    button.value = 0
+    button.value = self.init_label_type
     button.on_click(button_callback)
     return button
 
@@ -247,31 +272,63 @@ class EmbeddingDisplay:
       row = i // button_columns
       col = i % button_columns
       grid[row, col] = button
+    ipy_display(
+        HTML(
+            '<link rel="stylesheet"'
+            ' href="//stackpath.bootstrapcdn.com/font-awesome/4.7.0/css/font-awesome.min.css"/>'
+        )
+    )
     ipy_display(grid)
 
-  def harvest_labels(self, provenance: str) -> Sequence[interface.Annotation]:
+  def harvest_labels(
+      self,
+      provenance: str,
+      skip_uncertain: bool = True,
+  ) -> Sequence[interface.Annotation]:
     """Get the labels for this example."""
+
     labels = []
     for lbl, w in self.widgets.items():
-      if not w.value:
+      if w.value is None:  # uninitialized
         continue
-      elif w.value == -1:
-        lbl_type = interface.LabelType.NEGATIVE
-      elif w.value == 1:
-        lbl_type = interface.LabelType.POSITIVE
-      else:
-        raise ValueError(f'Unexpected button value: {w.value}')
+      if w.value == interface.LabelType.UNCERTAIN and skip_uncertain:
+        continue
       labels.append(
           interface.Annotation(
               id=-1,
               recording_id=self.recording_id,
               offsets=self.offsets,
               label=lbl,
-              label_type=lbl_type,
+              label_type=w.value,
               provenance=provenance,
           )
       )
     return labels
+
+  def harvest_annotated_window(
+      self,
+      provenance: str,
+      skip_uncertain: bool = True,
+  ) -> tuple[int, Sequence[interface.Annotation]]:
+    """Get the annotated windows for this example."""
+
+    labels = []
+    for lbl, w in self.widgets.items():
+      if w.value is None:  # uninitialized
+        continue
+      if w.value == interface.LabelType.UNCERTAIN and skip_uncertain:
+        continue
+      labels.append(
+          interface.Annotation(
+              id=-1,
+              recording_id=self.recording_id,
+              offsets=self.offsets,
+              label=lbl,
+              label_type=w.value,
+              provenance=provenance,
+          )
+      )
+    return self.window_id, labels
 
 
 @dataclasses.dataclass
@@ -335,6 +392,7 @@ class EmbeddingDisplayGroup:
               sample_rate_hz=sample_rate_hz,
               frame_rate=frame_rate,
               labels=annotations,
+              init_label_type=result.display_label_type,
           )
       )
     return cls.create(members=members, sample_rate_hz=sample_rate_hz, **kwargs)
@@ -420,22 +478,35 @@ class EmbeddingDisplayGroup:
             positive_labels, show_score=show_score, paged_mode=paged_mode
         )
 
-      next_page_button = ipywidgets.Button(
-          description='Next Page', disabled=False
-      )
+      next_page_button = ipywidgets.Button(description='Next Page')
       next_page_button.on_click(lambda x: increment_page_callback(x, 1))
-      prev_page_button = ipywidgets.Button(
-          description='Prev Page', disabled=False
-      )
+      prev_page_button = ipywidgets.Button(description='Prev Page')
       prev_page_button.on_click(lambda x: increment_page_callback(x, -1))
       ipy_display(prev_page_button)
       ipy_display(next_page_button)
 
-  def harvest_labels(self, provenance) -> Sequence[interface.Annotation]:
+  def harvest_labels(
+      self,
+      provenance: str,
+      skip_uncertain: bool = True,
+  ) -> Sequence[interface.Annotation]:
     labels = []
     for member in self.members:
-      labels.extend(member.harvest_labels(provenance))
+      labels.extend(member.harvest_labels(provenance, skip_uncertain))
     return labels
+
+  def harvest_annotated_windows(
+      self,
+      provenance: str,
+      skip_uncertain: bool = True,
+  ) -> Mapping[int, Sequence[interface.Annotation]]:
+    annotations_dict = {}
+    for member in self.members:
+      window_id, annotations = member.harvest_annotated_window(
+          provenance, skip_uncertain
+      )
+      annotations_dict[window_id] = annotations
+    return annotations_dict
 
 
 def pcen_melspec_display(

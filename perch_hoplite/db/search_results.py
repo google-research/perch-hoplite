@@ -18,6 +18,8 @@
 import dataclasses
 import heapq
 
+from perch_hoplite.db import interface
+
 
 @dataclasses.dataclass
 class SearchResult:
@@ -28,6 +30,9 @@ class SearchResult:
 
   # Score used for sorting the result.
   sort_score: float
+
+  # Label type used for display. If None, then the label type is unknown.
+  display_label_type: interface.LabelType | None = None
 
   def __lt__(self, other):
     return self.sort_score < other.sort_score

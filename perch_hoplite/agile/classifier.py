@@ -45,8 +45,8 @@ class LinearClassifier:
   def __call__(self, embeddings: np.ndarray):
     return np.dot(embeddings, self.beta) + self.beta_bias
 
-  def save(self, path: str):
-    """Save the classifier to a path."""
+  def to_config_dict(self) -> config_dict.ConfigDict:
+    """Convert the classifier to a ConfigDict."""
     cfg = config_dict.ConfigDict()
     cfg.model_config = self.embedding_model_config
     cfg.classes = self.classes
@@ -59,8 +59,22 @@ class LinearClassifier:
     ).decode('ascii')
     cfg.beta = beta_bytes
     cfg.beta_bias = beta_bias_bytes
+    return cfg
+
+  @classmethod
+  def from_config_dict(cls, cfg: config_dict.ConfigDict) -> 'LinearClassifier':
+    """Create a classifier from a ConfigDict."""
+    classes = cfg.classes
+    beta = np.frombuffer(base64.b64decode(cfg.beta), dtype=np.float32)
+    beta = np.reshape(beta, (-1, len(classes)))
+    beta_bias = np.frombuffer(base64.b64decode(cfg.beta_bias), dtype=np.float32)
+    embedding_model_config = cfg.model_config
+    return cls(beta, beta_bias, classes, embedding_model_config)
+
+  def save(self, path: str):
+    """Save the classifier to a path."""
     with open(path, 'w') as f:
-      f.write(cfg.to_json())
+      f.write(self.to_config_dict().to_json())
 
   @classmethod
   def load(cls, path: str):
@@ -68,12 +82,7 @@ class LinearClassifier:
     with open(path, 'r') as f:
       cfg_json = json.loads(f.read())
       cfg = config_dict.ConfigDict(cfg_json)
-    classes = cfg.classes
-    beta = np.frombuffer(base64.b64decode(cfg.beta), dtype=np.float32)
-    beta = np.reshape(beta, (-1, len(classes)))
-    beta_bias = np.frombuffer(base64.b64decode(cfg.beta_bias), dtype=np.float32)
-    embedding_model_config = cfg.model_config
-    return cls(beta, beta_bias, classes, embedding_model_config)
+      return cls.from_config_dict(cfg)
 
 
 def get_linear_model(embedding_dim: int, num_classes: int) -> tf.keras.Model:

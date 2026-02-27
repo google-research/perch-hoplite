@@ -16,25 +16,30 @@
 """Tests for metadata handling."""
 
 import os
+import shutil
+import tempfile
 
-from absl.testing import absltest
 from perch_hoplite.agile import metadata
 from perch_hoplite.db import interface as hoplite_interface
+
+from absl.testing import absltest
 
 
 class MetadataTest(absltest.TestCase):
 
   def setUp(self):
     super().setUp()
-    self.temp_dir = self.create_tempdir().full_path
+    # `self.create_tempdir()` raises an UnparsedFlagAccessError, which is why
+    # we use `tempdir` directly.
+    self.tempdir = tempfile.mkdtemp()
     self.desc_path = os.path.join(
-        self.temp_dir, 'hoplite_metadata_description.csv'
+        self.tempdir, 'hoplite_metadata_description.csv'
     )
     self.dep_path = os.path.join(
-        self.temp_dir, 'hoplite_deployments_metadata.csv'
+        self.tempdir, 'hoplite_deployments_metadata.csv'
     )
     self.rec_path = os.path.join(
-        self.temp_dir, 'hoplite_recordings_metadata.csv'
+        self.tempdir, 'hoplite_recordings_metadata.csv'
     )
 
     with open(self.desc_path, 'w') as f:
@@ -58,13 +63,17 @@ class MetadataTest(absltest.TestCase):
     with open(self.rec_path, 'w') as f:
       f.write('recording,observer,temp_c\nrec_a,Buffy,\nrec_b,Willow,22.2\n')
 
+  def tearDown(self):
+    super().tearDown()
+    shutil.rmtree(self.tempdir)
+
   def test_metadata_loading(self):
-    md = metadata.AgileMetadata.from_directory(self.temp_dir)
+    md = metadata.AgileMetadata.from_directory(self.tempdir)
     self.assertLen(md.deployment_metadata, 2)
     self.assertLen(md.recording_metadata, 2)
 
   def test_get_deployment_metadata(self):
-    md = metadata.AgileMetadata.from_directory(self.temp_dir)
+    md = metadata.AgileMetadata.from_directory(self.tempdir)
     print(md.recording_metadata)
     dep_a_md = md.get_deployment_metadata('dep_a')
     self.assertEqual(
@@ -79,7 +88,7 @@ class MetadataTest(absltest.TestCase):
     )
 
   def test_get_recording_metadata(self):
-    md = metadata.AgileMetadata.from_directory(self.temp_dir)
+    md = metadata.AgileMetadata.from_directory(self.tempdir)
     rec_b_md = md.get_recording_metadata('rec_b')
     self.assertEqual(
         rec_b_md,
@@ -87,7 +96,7 @@ class MetadataTest(absltest.TestCase):
     )
 
   def test_get_recording_metadata_missing_value(self):
-    md = metadata.AgileMetadata.from_directory(self.temp_dir)
+    md = metadata.AgileMetadata.from_directory(self.tempdir)
     rec_a_md = md.get_recording_metadata('rec_a')
     self.assertEqual(
         rec_a_md,
@@ -95,30 +104,30 @@ class MetadataTest(absltest.TestCase):
     )
 
   def test_get_unknown_metadata(self):
-    md = metadata.AgileMetadata.from_directory(self.temp_dir)
+    md = metadata.AgileMetadata.from_directory(self.tempdir)
     self.assertEqual({}, md.get_deployment_metadata('unknown'))
     self.assertEqual({}, md.get_recording_metadata('unknown'))
 
   def test_missing_description_file(self):
     os.remove(self.desc_path)
-    md = metadata.AgileMetadata.from_directory(self.temp_dir)
+    md = metadata.AgileMetadata.from_directory(self.tempdir)
     self.assertEqual({}, md.get_deployment_metadata('dep_a'))
     self.assertEqual({}, md.get_recording_metadata('rec_a'))
 
   def test_missing_deployment_file(self):
     os.remove(self.dep_path)
-    md = metadata.AgileMetadata.from_directory(self.temp_dir)
+    md = metadata.AgileMetadata.from_directory(self.tempdir)
     self.assertEqual({}, md.get_deployment_metadata('dep_a'))
     self.assertLen(md.recording_metadata, 2)
 
   def test_missing_recording_file(self):
     os.remove(self.rec_path)
-    md = metadata.AgileMetadata.from_directory(self.temp_dir)
+    md = metadata.AgileMetadata.from_directory(self.tempdir)
     self.assertLen(md.deployment_metadata, 2)
     self.assertEqual({}, md.get_recording_metadata('rec_a'))
 
   def test_get_annotations(self):
-    ann_path = os.path.join(self.temp_dir, 'hoplite_annotations.csv')
+    ann_path = os.path.join(self.tempdir, 'hoplite_annotations.csv')
     with open(ann_path, 'w') as f:
       f.write(
           'recording,label,start_offset_s,end_offset_s,label_type\n'
@@ -126,7 +135,7 @@ class MetadataTest(absltest.TestCase):
           'rec_a,species_b,2.0,3.0,positive\n'
           'rec_b,species_a,1.0,2.0,negative\n'
       )
-    md = metadata.AgileMetadata.from_directory(self.temp_dir)
+    md = metadata.AgileMetadata.from_directory(self.tempdir)
     rec_a_ann = md.get_recording_annotations('rec_a')
     self.assertEqual(
         rec_a_ann,
@@ -168,7 +177,7 @@ class MetadataTest(absltest.TestCase):
 
     with self.subTest('no annotations'):
       os.remove(ann_path)
-      md = metadata.AgileMetadata.from_directory(self.temp_dir)
+      md = metadata.AgileMetadata.from_directory(self.tempdir)
       self.assertEqual([], md.get_recording_annotations('rec_a'))
 
 

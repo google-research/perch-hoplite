@@ -27,9 +27,15 @@ class MetadataTest(absltest.TestCase):
   def setUp(self):
     super().setUp()
     self.temp_dir = self.create_tempdir().full_path
-    self.desc_path = os.path.join(self.temp_dir, 'metadata_description.csv')
-    self.dep_path = os.path.join(self.temp_dir, 'deployments_metadata.csv')
-    self.rec_path = os.path.join(self.temp_dir, 'recordings_metadata.csv')
+    self.desc_path = os.path.join(
+        self.temp_dir, 'hoplite_metadata_description.csv'
+    )
+    self.dep_path = os.path.join(
+        self.temp_dir, 'hoplite_deployments_metadata.csv'
+    )
+    self.rec_path = os.path.join(
+        self.temp_dir, 'hoplite_recordings_metadata.csv'
+    )
 
     with open(self.desc_path, 'w') as f:
       f.write(
@@ -50,7 +56,7 @@ class MetadataTest(absltest.TestCase):
           'dep_b,"prairie",-120.2,30.2,rec_02\n'
       )
     with open(self.rec_path, 'w') as f:
-      f.write('recording,observer,temp_c\nrec_a,Buffy,,\nrec_b,Willow,22.2\n')
+      f.write('recording,observer,temp_c\nrec_a,Buffy,\nrec_b,Willow,22.2\n')
 
   def test_metadata_loading(self):
     md = metadata.AgileMetadata.from_directory(self.temp_dir)
@@ -59,6 +65,7 @@ class MetadataTest(absltest.TestCase):
 
   def test_get_deployment_metadata(self):
     md = metadata.AgileMetadata.from_directory(self.temp_dir)
+    print(md.recording_metadata)
     dep_a_md = md.get_deployment_metadata('dep_a')
     self.assertEqual(
         dep_a_md,
@@ -84,7 +91,7 @@ class MetadataTest(absltest.TestCase):
     rec_a_md = md.get_recording_metadata('rec_a')
     self.assertEqual(
         rec_a_md,
-        {'recording': 'rec_a', 'observer': 'Buffy'},
+        {'recording': 'rec_a', 'observer': 'Buffy', 'temp_c': None},
     )
 
   def test_get_unknown_metadata(self):
@@ -111,7 +118,7 @@ class MetadataTest(absltest.TestCase):
     self.assertEqual({}, md.get_recording_metadata('rec_a'))
 
   def test_get_annotations(self):
-    ann_path = os.path.join(self.temp_dir, 'annotations.csv')
+    ann_path = os.path.join(self.temp_dir, 'hoplite_annotations.csv')
     with open(ann_path, 'w') as f:
       f.write(
           'recording,label,start_offset_s,end_offset_s,label_type\n'

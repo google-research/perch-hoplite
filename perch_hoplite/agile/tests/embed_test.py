@@ -26,39 +26,51 @@ from perch_hoplite.agile.tests import test_utils
 from perch_hoplite.db import db_loader
 
 from absl.testing import absltest
+from absl.testing import parameterized
 
 
-class EmbedTest(absltest.TestCase):
+class EmbedTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
     # `self.create_tempdir()` raises an UnparsedFlagAccessError, which is why
     # we use `tempdir` directly.
     self.tempdir = tempfile.mkdtemp()
+    self.db_path = os.path.join(self.tempdir, 'test_db')
 
   def tearDown(self):
     super().tearDown()
     shutil.rmtree(self.tempdir)
 
-  def test_embed_worker(self):
+  @parameterized.named_parameters(
+      ('in_mem', 'in_mem'),
+      ('sqlite_usearch', 'sqlite_usearch'),
+  )
+  def test_embed_worker(self, db_key):
     classes = ['pos', 'neg']
     filenames = ['foo', 'bar', 'baz']
     test_utils.make_wav_files(self.tempdir, classes, filenames, file_len_s=6.0)
 
     # Create metadata files.
-    with open(os.path.join(self.tempdir, 'metadata_description.csv'), 'w') as f:
+    with open(
+        os.path.join(self.tempdir, 'hoplite_metadata_description.csv'), 'w'
+    ) as f:
       f.write(
           'field_name,metadata_level,type,description\n'
-          'deployment_id,deployment,str,Deployment identifier.\n'
+          'deployment,deployment,str,Deployment identifier.\n'
           'habitat,deployment,str,Habitat type.\n'
-          'file_id,recording,str,Recording identifier.\n'
+          'recording,recording,str,Recording identifier.\n'
           'mic_type,recording,str,Microphone type.\n'
       )
-    with open(os.path.join(self.tempdir, 'deployments_metadata.csv'), 'w') as f:
-      f.write('deployment_id,habitat\npos,forest\nneg,grassland\n')
-    with open(os.path.join(self.tempdir, 'recordings_metadata.csv'), 'w') as f:
+    with open(
+        os.path.join(self.tempdir, 'hoplite_deployments_metadata.csv'), 'w'
+    ) as f:
+      f.write('deployment,habitat\npos,forest\nneg,grassland\n')
+    with open(
+        os.path.join(self.tempdir, 'hoplite_recordings_metadata.csv'), 'w'
+    ) as f:
       f.write(
-          'file_id,mic_type\n'
+          'recording,mic_type\n'
           'pos/foo.wav,MicA\n'
           'pos/bar.wav,MicA\n'
           'pos/baz.wav,MicB\n'
@@ -79,13 +91,6 @@ class EmbedTest(absltest.TestCase):
         )
     )
 
-    in_mem_db_config = config_dict.ConfigDict()
-    in_mem_db_config.embedding_dim = 32
-    db_config = db_loader.DBConfig(
-        db_key='in_mem',
-        db_config=in_mem_db_config,
-    )
-
     placeholder_model_config = config_dict.ConfigDict()
     placeholder_model_config.embedding_size = 32
     placeholder_model_config.sample_rate = 16000
@@ -96,7 +101,22 @@ class EmbedTest(absltest.TestCase):
     )
 
     with self.subTest('embedding'):
-      db = db_config.load_db()
+      embedding_dim = 32
+      if db_key == 'in_mem':
+        in_mem_db_config = config_dict.ConfigDict()
+        in_mem_db_config.embedding_dim = embedding_dim
+        db_config = db_loader.DBConfig(
+            db_key='in_mem',
+            db_config=in_mem_db_config,
+        )
+        db = db_config.load_db()
+      elif db_key == 'sqlite_usearch':
+        db_path = self.db_path + '_embedding'
+        db = db_loader.create_new_usearch_db(
+            db_path=db_path, embedding_dim=embedding_dim
+        )
+      else:
+        raise ValueError(f'Unknown db_key: {db_key}')
 
       embed_worker = embed.EmbedWorker(
           audio_sources=aduio_sources,
@@ -132,14 +152,22 @@ class EmbedTest(absltest.TestCase):
       self.assertIn('model_config', got_md)
 
     with self.subTest('labels'):
-      in_mem_db_config = config_dict.ConfigDict()
-      # DB embedding dim needs to match the number of classes we will extract.
-      in_mem_db_config.embedding_dim = 6
-      db_config = db_loader.DBConfig(
-          db_key='in_mem',
-          db_config=in_mem_db_config,
-      )
-      db = db_config.load_db()
+      embedding_dim = 6
+      if db_key == 'in_mem':
+        in_mem_db_config = config_dict.ConfigDict()
+        in_mem_db_config.embedding_dim = embedding_dim
+        db_config = db_loader.DBConfig(
+            db_key='in_mem',
+            db_config=in_mem_db_config,
+        )
+        db = db_config.load_db()
+      elif db_key == 'sqlite_usearch':
+        db_path = self.db_path + '_labels'
+        db = db_loader.create_new_usearch_db(
+            db_path=db_path, embedding_dim=embedding_dim
+        )
+      else:
+        raise ValueError(f'Unknown db_key: {db_key}')
 
       model_config.logits_key = 'label'
       model_config.logits_idxes = (1, 2, 3, 5, 8, 13)

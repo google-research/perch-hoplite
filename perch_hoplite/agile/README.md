@@ -45,14 +45,14 @@ directory:
         `int`, and `bytes`.
     *   `description`: An optional description of the field.
 
-2.  **`deployments_metadata.csv`**: This file contains metadata for each
+2.  **`hoplite_deployments_metadata.csv`**: This file contains metadata for each
     deployment. The first column must be the deployment identifier (which
     corresponds to the directory name if audio files are in
     `deployment/recording.wav`
     format), and subsequent columns should match `field_name`s from
     `metadata_description.csv` where `metadata_level` is `deployment`.
 
-3.  **`recordings_metadata.csv`**: This file contains metadata for each
+3.  **`hoplite_recordings_metadata.csv`**: This file contains metadata for each
     recording. The first column must be the recording identifier (e.g.
     `deployment/recording.wav`),
     and subsequent columns should match `field_name`s from
@@ -60,7 +60,7 @@ directory:
 
 ### Example
 
-**`metadata_description.csv`**
+**`hoplite_metadata_description.csv`**
 
 ```csv
 field_name,metadata_level,type,description
@@ -71,7 +71,7 @@ file_id,recording,str,Recording identifier.
 mic_type,recording,str,Microphone type.
 ```
 
-**`deployments_metadata.csv`**
+**`hoplite_deployments_metadata.csv`**
 
 ```csv
 deployment_name,habitat,latitude
@@ -79,7 +79,7 @@ DEP01,"forest",47.6
 DEP02,"grassland",45.1
 ```
 
-**`recordings_metadata.csv`**
+**`hoplite_recordings_metadata.csv`**
 
 ```csv
 file_id,mic_type
@@ -98,7 +98,8 @@ and `Recording` objects returned by the database interface (e.g.,
 
 If you have existing annotations for your audio data, Hoplite can ingest these
 during the embedding process. Annotations should be stored in CSV files named
-`annotations.csv` alongside your audio data. Each `annotations.csv` should
+`hoplite_annotations.csv` alongside your audio data. Each
+`hoplite_annotations.csv` should
 contain columns for `recording` (the filename or file_id of the audio),
 `start_offset_s`, `end_offset_s`, `label`, and `label_type` ('positive',
 'negative', or 'uncertain'). When embeddings are generated, Hoplite will find
@@ -107,7 +108,7 @@ appropriate time windows.
 
 ### Example
 
-**`annotations.csv`**
+**`hoplite_annotations.csv`**
 
 ```csv
 recording,start_offset_s,end_offset_s,label,label_type

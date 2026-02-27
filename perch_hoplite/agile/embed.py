@@ -220,6 +220,7 @@ class EmbedWorker:
     )
     if not deployments:
       md = self.metadata[project_name].get_deployment_metadata(deployment_name)
+      md.pop('deployment', None)
       return self.db.insert_deployment(
           name=deployment_name,
           project=project_name,
@@ -243,6 +244,7 @@ class EmbedWorker:
     )
     if not recordings:
       md = self.metadata[dataset_name].get_recording_metadata(filename)
+      md.pop('recording', None)
       return (
           self.db.insert_recording(
               filename=filename,
@@ -296,7 +298,7 @@ class EmbedWorker:
       if not agile_md.annotations:
         continue
       for file_id, annotation_list in agile_md.annotations.items():
-        depl_name = os.path.split(file_id)[0]
+        depl_name = file_id.split('/')[0]
         if not depl_name:
           logging.warning(
               'Could not get deployment name from file_id %s, skipping.',

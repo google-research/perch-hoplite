@@ -708,6 +708,9 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   ) -> int:
     """Insert a deployment into the database."""
 
+    for key, value in kwargs.items():
+      if key not in self._extra_table_columns['deployments']:
+        self.add_extra_table_column('deployments', key, type(value))
     cursor = self._get_cursor()
     columns_str, placeholders_str, values = format_sql_insert_values(
         name=name,
@@ -793,6 +796,9 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       **kwargs: Any,
   ) -> int:
     """Insert a recording into the database."""
+    for key, value in kwargs.items():
+      if key not in self._extra_table_columns['recordings']:
+        self.add_extra_table_column('recordings', key, type(value))
 
     cursor = self._get_cursor()
     columns_str, placeholders_str, values = format_sql_insert_values(

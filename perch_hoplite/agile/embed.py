@@ -19,7 +19,6 @@ from concurrent import futures
 import dataclasses
 import functools
 import itertools
-import os
 import threading
 
 from absl import logging
@@ -213,21 +212,25 @@ class EmbedWorker:
       self,
       deployment_name: str,
       project_name: str,
+      error_on_insert: bool = False,
   ) -> int:
     """Get the deployment ID for the given deployment name and project name."""
     deployments = self.db.get_all_deployments(
         config_dict.create(eq=dict(name=deployment_name, project=project_name))
     )
-    if not deployments:
-      md = self.metadata[project_name].get_deployment_metadata(deployment_name)
-      md.pop('deployment', None)
-      return self.db.insert_deployment(
-          name=deployment_name,
-          project=project_name,
-          **md,
-      )
-    else:
+    if deployments:
       return deployments[0].id
+    if error_on_insert:
+      raise ValueError(
+          f'Deployment {deployment_name} not found in project {project_name}.'
+      )
+    md = self.metadata[project_name].get_deployment_metadata(deployment_name)
+    md.pop('deployment', None)
+    return self.db.insert_deployment(
+        name=deployment_name,
+        project=project_name,
+        **md,
+    )
 
   @functools.cache  # pylint: disable=method-cache-max-size-none
   def _get_or_insert_recording_id(
@@ -235,6 +238,7 @@ class EmbedWorker:
       filename: str,
       deployment_id: int,
       dataset_name: str,
+      error_on_insert: bool = False,
   ) -> tuple[int, bool]:
     """Get the recording ID, and indicate whether it was newly inserted."""
     recordings = self.db.get_all_recordings(
@@ -242,19 +246,22 @@ class EmbedWorker:
             eq=dict(filename=filename, deployment_id=deployment_id)
         )
     )
-    if not recordings:
-      md = self.metadata[dataset_name].get_recording_metadata(filename)
-      md.pop('recording', None)
-      return (
-          self.db.insert_recording(
-              filename=filename,
-              deployment_id=deployment_id,
-              **md,
-          ),
-          True,
-      )
-    else:
+    if recordings:
       return recordings[0].id, False
+    if error_on_insert:
+      raise ValueError(
+          f'Recording {filename} not found in deployment {deployment_id}.'
+      )
+    md = self.metadata[dataset_name].get_recording_metadata(filename)
+    md.pop('recording', None)
+    return (
+        self.db.insert_recording(
+            filename=filename,
+            deployment_id=deployment_id,
+            **md,
+        ),
+        True,
+    )
 
   def add_deployments(self, target_dataset_name: str | None = None):
     """Add deployments to db and create a source ID to deployment ID mapping."""

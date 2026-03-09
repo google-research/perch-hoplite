@@ -29,7 +29,7 @@ from etils import epath
 from ml_collections import config_dict
 from perch_hoplite import audio_io
 from perch_hoplite import path_utils
-from perch_hoplite.agile import convert_legacy
+from perch_hoplite.agile.migrations import convert_legacy
 from perch_hoplite.agile.tests import test_utils
 
 from absl.testing import absltest

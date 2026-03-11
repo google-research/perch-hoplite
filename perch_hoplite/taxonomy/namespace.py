@@ -85,6 +85,16 @@ class Mapping:
   def __str__(self):
     return f"Mapping from {self.source_namespace} to {self.target_namespace}."
 
+  def reverse(self) -> "Mapping":
+    """Returns a mapping with the source and target namespaces swapped."""
+    if len(set(self.mapped_pairs.values())) != len(self.mapped_pairs.values()):
+      raise ValueError("Mapping is not injective, cannot reverse.")
+    return Mapping(
+        source_namespace=self.target_namespace,
+        target_namespace=self.source_namespace,
+        mapped_pairs={v: k for k, v in self.mapped_pairs.items()},
+    )
+
 
 @dataclasses.dataclass
 class ClassList:

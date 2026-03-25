@@ -36,8 +36,48 @@ class MultiDBWrapper(interface.HopliteDBInterface):
 
     Args:
       dbs: A sequence of databases to wrap.
+
+    Raises:
+      ValueError: If `MultiDBWrapper` contains no databases.
     """
     self._dbs = dbs
+    if not self._dbs:
+      raise ValueError("MultiDBWrapper contains no databases.")
+
+  def _split_id(self, external_id: int) -> tuple[int, int]:
+    """Splits an external ID into a database index and internal ID.
+
+    Calculate the internal database index and internal ID from an external ID
+    number.
+
+    Args:
+      external_id: The external ID number.
+
+    Returns:
+      db_index: The database index.
+      internal_id: The internal ID number within the database that has index
+        db_index.
+    """
+
+    num_dbs = len(self._dbs)
+    db_index = external_id % num_dbs
+    internal_id = external_id // num_dbs
+    self._dbs[db_index].get_window(internal_id)
+    return db_index, internal_id
+
+  def _join_id(self, db_index: int, internal_id: int) -> int:
+    """Joins a database index and internal ID into an external ID.
+
+    Args:
+      db_index: The database index.
+      internal_id: The internal ID number.
+
+    Returns:
+      The external ID number.
+    """
+
+    self._dbs[db_index].get_window(internal_id)
+    return internal_id * len(self._dbs) + db_index
 
   @classmethod
   def create(cls, **kwargs) -> "MultiDBWrapper":

@@ -15,13 +15,29 @@
 
 """Score functions for Hoplite."""
 
-from typing import Callable
+from typing import Protocol, overload, runtime_checkable
 import numpy as np
+
+
+@runtime_checkable
+class ScoreFn(Protocol):
+  """Protocol for score functions supporting single and batched inputs."""
+
+  @overload
+  def __call__(self, data: np.ndarray, query: np.ndarray) -> float:
+    ...
+
+  @overload
+  def __call__(self, data: np.ndarray, query: np.ndarray) -> np.ndarray:
+    ...
+
+  def __call__(self, data: np.ndarray, query: np.ndarray) -> float | np.ndarray:
+    ...
 
 
 def get_score_fn(
     name: str, bias: float | None = None, target_score: float | None = None
-) -> Callable[[np.ndarray, np.ndarray], np.ndarray]:
+) -> ScoreFn:
   """Get a score function by name."""
   if name == 'dot':
     score_fn = numpy_dot
@@ -46,7 +62,7 @@ def get_score_fn(
   return targeted_fn
 
 
-def numpy_dot(data: np.ndarray, query: np.ndarray) -> np.ndarray:
+def numpy_dot(data: np.ndarray, query: np.ndarray) -> float | np.ndarray:
   """Simple numpy dot product, which allows for multiple queries."""
   if len(query.shape) > 1:
     # Tensordot is a little faster than dot for multiple queries, but slower
@@ -55,7 +71,7 @@ def numpy_dot(data: np.ndarray, query: np.ndarray) -> np.ndarray:
   return np.dot(data, query)
 
 
-def numpy_cos(data: np.ndarray, query: np.ndarray) -> np.ndarray:
+def numpy_cos(data: np.ndarray, query: np.ndarray) -> float | np.ndarray:
   """Simple numpy cosine similarity, allowing multiple queries."""
   data_norms = np.linalg.norm(data, axis=-1, keepdims=True)
   query_norms = np.linalg.norm(query, axis=-1, keepdims=True)
@@ -66,7 +82,9 @@ def numpy_cos(data: np.ndarray, query: np.ndarray) -> np.ndarray:
   return np.dot(unit_data, unit_query)
 
 
-def numpy_neg_euclidean(data: np.ndarray, query: np.ndarray) -> np.ndarray:
+def numpy_neg_euclidean(
+    data: np.ndarray, query: np.ndarray
+) -> float | np.ndarray:
   """Negative L2 distance allowing multiple queries."""
   data_norms = np.linalg.norm(data, axis=-1)
   if len(query.shape) > 1:

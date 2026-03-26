@@ -24,6 +24,7 @@ from ml_collections import config_dict
 import pandas as pd
 from perch_hoplite.agile import embed
 from perch_hoplite.agile import source_info
+from perch_hoplite.db import datatypes
 from perch_hoplite.db import db_loader
 from perch_hoplite.db import interface
 from perch_hoplite.taxonomy import annotations_fns
@@ -92,7 +93,7 @@ class AnnotatedDatasetIngestor:
                 recording_id=window.recording_id,
                 offsets=window.offsets,
                 label=label,
-                label_type=interface.LabelType.POSITIVE,
+                label_type=datatypes.LabelType.POSITIVE,
                 provenance=provenance,
                 handle_duplicates='allow',
             )

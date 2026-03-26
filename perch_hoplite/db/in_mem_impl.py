@@ -26,6 +26,7 @@ from typing import Any, Literal
 from absl import logging
 from ml_collections import config_dict
 import numpy as np
+from perch_hoplite.db import datatypes
 from perch_hoplite.db import interface
 
 
@@ -177,16 +178,16 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
   _hoplite_metadata: dict[str, config_dict.ConfigDict] = dataclasses.field(
       default_factory=dict
   )
-  _deployments: dict[int, interface.Deployment] = dataclasses.field(
+  _deployments: dict[int, datatypes.Deployment] = dataclasses.field(
       default_factory=dict
   )
-  _recordings: dict[int, interface.Recording] = dataclasses.field(
+  _recordings: dict[int, datatypes.Recording] = dataclasses.field(
       default_factory=dict
   )
-  _windows: dict[int, interface.Window] = dataclasses.field(
+  _windows: dict[int, datatypes.Window] = dataclasses.field(
       default_factory=dict
   )
-  _annotations: dict[int, interface.Annotation] = dataclasses.field(
+  _annotations: dict[int, datatypes.Annotation] = dataclasses.field(
       default_factory=dict
   )
   _next_deployment_id: int = 1
@@ -262,7 +263,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
     """Insert a deployment into the database."""
 
     deployment_id = self._next_deployment_id
-    self._deployments[deployment_id] = interface.Deployment(
+    self._deployments[deployment_id] = datatypes.Deployment(
         id=deployment_id,
         name=name,
         project=project,
@@ -273,7 +274,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
     self._next_deployment_id += 1
     return deployment_id
 
-  def get_deployment(self, deployment_id: int) -> interface.Deployment:
+  def get_deployment(self, deployment_id: int) -> datatypes.Deployment:
     """Get a deployment from the database."""
     deployment_id = int(deployment_id)
     return self._deployments[deployment_id]
@@ -305,7 +306,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
       raise ValueError(f'Deployment id not found: {deployment_id}')
 
     recording_id = self._next_recording_id
-    self._recordings[recording_id] = interface.Recording(
+    self._recordings[recording_id] = datatypes.Recording(
         id=recording_id,
         filename=filename,
         datetime=datetime,
@@ -318,7 +319,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
   def get_recording(
       self,
       recording_id: int,
-  ) -> interface.Recording:
+  ) -> datatypes.Recording:
     """Get a recording from the database."""
     recording_id = int(recording_id)
     return self._recordings[recording_id]
@@ -368,7 +369,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
       return duplicate_id
 
     window_id = self._next_window_id
-    self._windows[window_id] = interface.Window(
+    self._windows[window_id] = datatypes.Window(
         id=window_id,
         recording_id=recording_id,
         offsets=offsets,
@@ -382,7 +383,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
       self,
       window_id: int,
       include_embedding: bool = False,
-  ) -> interface.Window:
+  ) -> datatypes.Window:
     """Get a window from the database."""
 
     window_id = int(window_id)
@@ -410,7 +411,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
       recording_id: int,
       offsets: list[float],
       label: str,
-      label_type: interface.LabelType,
+      label_type: datatypes.LabelType,
       provenance: str,
       handle_duplicates: Literal[
           'allow', 'overwrite', 'skip', 'error'
@@ -429,7 +430,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
       return duplicate_id
 
     annotation_id = self._next_annotation_id
-    self._annotations[annotation_id] = interface.Annotation(
+    self._annotations[annotation_id] = datatypes.Annotation(
         id=annotation_id,
         recording_id=recording_id,
         offsets=offsets,
@@ -441,7 +442,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
     self._next_annotation_id += 1
     return annotation_id
 
-  def get_annotation(self, annotation_id: int) -> interface.Annotation:
+  def get_annotation(self, annotation_id: int) -> datatypes.Annotation:
     """Get an annotation from the database."""
     annotation_id = int(annotation_id)
     return self._annotations[annotation_id]
@@ -548,7 +549,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
   def get_all_deployments(
       self,
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
-  ) -> Sequence[interface.Deployment]:
+  ) -> Sequence[datatypes.Deployment]:
     """Get all deployments from the database."""
     restrict_deployments = select_matching_keys(self._deployments, filter)
     return [self._deployments[key] for key in restrict_deployments]
@@ -556,7 +557,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
   def get_all_recordings(
       self,
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
-  ) -> Sequence[interface.Recording]:
+  ) -> Sequence[datatypes.Recording]:
     """Get all recordings from the database."""
     restrict_recordings = select_matching_keys(self._recordings, filter)
     return [self._recordings[key] for key in restrict_recordings]
@@ -565,7 +566,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
       self,
       include_embedding: bool = False,
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
-  ) -> Sequence[interface.Window]:
+  ) -> Sequence[datatypes.Window]:
     """Get all windows from the database."""
 
     restrict_windows = select_matching_keys(self._windows, filter)
@@ -582,14 +583,14 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
   def get_all_annotations(
       self,
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
-  ) -> Sequence[interface.Annotation]:
+  ) -> Sequence[datatypes.Annotation]:
     """Get all annotations from the database."""
     restrict_annotations = select_matching_keys(self._annotations, filter)
     return [self._annotations[key] for key in restrict_annotations]
 
   def get_all_labels(
       self,
-      label_type: interface.LabelType | None = None,
+      label_type: datatypes.LabelType | None = None,
   ) -> Sequence[str]:
     """Get all distinct labels from the database."""
     return sorted({
@@ -600,7 +601,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
 
   def count_each_label(
       self,
-      label_type: interface.LabelType | None = None,
+      label_type: datatypes.LabelType | None = None,
   ) -> collections.Counter[str]:
     """Count each label in the database, ignoring provenance."""
 

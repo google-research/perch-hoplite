@@ -22,6 +22,7 @@ from typing import Any
 
 from ml_collections import config_dict
 import numpy as np
+from perch_hoplite.db import datatypes
 from perch_hoplite.db import interface
 
 
@@ -100,9 +101,9 @@ class DataManager:
     for annotation in annotations:
       if annotation.label not in lbl_idxes:
         continue
-      if annotation.label_type == interface.LabelType.POSITIVE:
+      if annotation.label_type == datatypes.LabelType.POSITIVE:
         pos[lbl_idxes[annotation.label]] += 1.0
-      elif annotation.label_type == interface.LabelType.NEGATIVE:
+      elif annotation.label_type == datatypes.LabelType.NEGATIVE:
         neg[lbl_idxes[annotation.label]] += 1.0
     count = pos + neg
     mask = count > 0
@@ -175,7 +176,7 @@ class AgileDataManager(DataManager):
         annotations_filter=config_dict.create(
             eq=dict(
                 label=label,
-                label_type=interface.LabelType.POSITIVE,
+                label_type=datatypes.LabelType.POSITIVE,
             )
         )
     )
@@ -183,7 +184,7 @@ class AgileDataManager(DataManager):
         annotations_filter=config_dict.create(
             eq=dict(
                 label=label,
-                label_type=interface.LabelType.NEGATIVE,
+                label_type=datatypes.LabelType.NEGATIVE,
             )
         )
     )
@@ -287,7 +288,7 @@ class FullyAnnotatedDataManager(DataManager):
           annotations_filter=config_dict.create(
               eq=dict(
                   label=label,
-                  label_type=interface.LabelType.POSITIVE,
+                  label_type=datatypes.LabelType.POSITIVE,
               )
           )
       )

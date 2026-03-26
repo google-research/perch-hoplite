@@ -26,6 +26,7 @@ from perch_hoplite import path_utils
 from perch_hoplite.agile import embed
 from perch_hoplite.agile import ingest_annotations
 from perch_hoplite.agile.tests import test_utils
+from perch_hoplite.db import datatypes
 from perch_hoplite.db import interface
 from perch_hoplite.db.tests import test_utils as db_test_utils
 from perch_hoplite.taxonomy import annotations
@@ -124,7 +125,7 @@ class IngestAnnotationsTest(absltest.TestCase):
 
     def _check_label(want_label_str, got_label):
       self.assertEqual(got_label.label, want_label_str)
-      self.assertEqual(got_label.label_type, interface.LabelType.POSITIVE)
+      self.assertEqual(got_label.label_type, datatypes.LabelType.POSITIVE)
       self.assertEqual(got_label.provenance, 'test_dataset')
 
     # There are two jabwar annotations for the window at offset 185.

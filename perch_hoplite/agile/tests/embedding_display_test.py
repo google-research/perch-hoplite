@@ -27,7 +27,7 @@ from perch_hoplite.agile import audio_loader
 from perch_hoplite.agile import embedding_display
 from perch_hoplite.agile import source_info
 from perch_hoplite.agile.tests import test_utils
-from perch_hoplite.db import interface
+from perch_hoplite.db import datatypes
 
 from absl.testing import absltest
 
@@ -116,40 +116,40 @@ class EmbeddingDisplayTest(absltest.TestCase):
     self.assertIsNone(bar_button.value)
     self.assertEmpty(disp.harvest_labels('test_provenance'))
     foo_button.click()
-    self.assertEqual(foo_button.value, interface.LabelType.POSITIVE)
+    self.assertEqual(foo_button.value, datatypes.LabelType.POSITIVE)
     self.assertIsNone(bar_button.value)
     bar_button.click()
-    self.assertEqual(foo_button.value, interface.LabelType.POSITIVE)
-    self.assertEqual(bar_button.value, interface.LabelType.POSITIVE)
+    self.assertEqual(foo_button.value, datatypes.LabelType.POSITIVE)
+    self.assertEqual(bar_button.value, datatypes.LabelType.POSITIVE)
     foo_button.click()
-    self.assertEqual(foo_button.value, interface.LabelType.NEGATIVE)
-    self.assertEqual(bar_button.value, interface.LabelType.POSITIVE)
+    self.assertEqual(foo_button.value, datatypes.LabelType.NEGATIVE)
+    self.assertEqual(bar_button.value, datatypes.LabelType.POSITIVE)
     labels = disp.harvest_labels('test_provenance')
     self.assertLen(labels, 2)
     self.assertEqual(labels[0].recording_id, 234)
     self.assertSequenceAlmostEqual(labels[0].offsets, [1.0, 2.0])
     self.assertEqual(labels[0].label, 'foo')
-    self.assertEqual(labels[0].label_type, interface.LabelType.NEGATIVE)
+    self.assertEqual(labels[0].label_type, datatypes.LabelType.NEGATIVE)
     self.assertEqual(labels[0].provenance, 'test_provenance')
 
     self.assertEqual(labels[1].recording_id, 234)
     self.assertSequenceAlmostEqual(labels[1].offsets, [1.0, 2.0])
     self.assertEqual(labels[1].label, 'bar')
-    self.assertEqual(labels[1].label_type, interface.LabelType.POSITIVE)
+    self.assertEqual(labels[1].label_type, datatypes.LabelType.POSITIVE)
     self.assertEqual(labels[1].provenance, 'test_provenance')
 
     bar_button.click()
-    self.assertEqual(foo_button.value, interface.LabelType.NEGATIVE)
-    self.assertEqual(bar_button.value, interface.LabelType.NEGATIVE)
+    self.assertEqual(foo_button.value, datatypes.LabelType.NEGATIVE)
+    self.assertEqual(bar_button.value, datatypes.LabelType.NEGATIVE)
     foo_button.click()
-    self.assertEqual(foo_button.value, interface.LabelType.UNCERTAIN)
-    self.assertEqual(bar_button.value, interface.LabelType.NEGATIVE)
+    self.assertEqual(foo_button.value, datatypes.LabelType.UNCERTAIN)
+    self.assertEqual(bar_button.value, datatypes.LabelType.NEGATIVE)
     foo_button.click()
     self.assertIsNone(foo_button.value)
-    self.assertEqual(bar_button.value, interface.LabelType.NEGATIVE)
+    self.assertEqual(bar_button.value, datatypes.LabelType.NEGATIVE)
     bar_button.click()
     self.assertIsNone(foo_button.value)
-    self.assertEqual(bar_button.value, interface.LabelType.UNCERTAIN)
+    self.assertEqual(bar_button.value, datatypes.LabelType.UNCERTAIN)
     bar_button.click()
     self.assertIsNone(foo_button.value)
     self.assertIsNone(bar_button.value)

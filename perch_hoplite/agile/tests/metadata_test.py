@@ -20,7 +20,7 @@ import shutil
 import tempfile
 
 from perch_hoplite.agile import metadata
-from perch_hoplite.db import interface as hoplite_interface
+from perch_hoplite.db import datatypes
 
 from absl.testing import absltest
 
@@ -140,20 +140,20 @@ class MetadataTest(absltest.TestCase):
     self.assertEqual(
         rec_a_ann,
         [
-            hoplite_interface.Annotation(
+            datatypes.Annotation(
                 id=-1,
                 recording_id=-1,
                 label='species_a',
                 offsets=[0.5, 1.5],
-                label_type=hoplite_interface.LabelType.POSITIVE,
+                label_type=datatypes.LabelType.POSITIVE,
                 provenance='agile_metadata',
             ),
-            hoplite_interface.Annotation(
+            datatypes.Annotation(
                 id=-1,
                 recording_id=-1,
                 label='species_b',
                 offsets=[2.0, 3.0],
-                label_type=hoplite_interface.LabelType.POSITIVE,
+                label_type=datatypes.LabelType.POSITIVE,
                 provenance='agile_metadata',
             ),
         ],
@@ -162,12 +162,12 @@ class MetadataTest(absltest.TestCase):
     self.assertEqual(
         rec_b_ann,
         [
-            hoplite_interface.Annotation(
+            datatypes.Annotation(
                 id=-1,
                 recording_id=-1,
                 label='species_a',
                 offsets=[1.0, 2.0],
-                label_type=hoplite_interface.LabelType.NEGATIVE,
+                label_type=datatypes.LabelType.NEGATIVE,
                 provenance='agile_metadata',
             )
         ],

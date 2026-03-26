@@ -30,7 +30,11 @@ from absl import logging
 from etils import epath
 from ml_collections import config_dict
 import numpy as np
+from perch_hoplite.db import brutalism
+from perch_hoplite.db import datatypes
 from perch_hoplite.db import interface
+from perch_hoplite.db import score_functions
+from perch_hoplite.db import search_results
 from usearch import index as uindex
 
 HOPLITE_FILENAME = 'hoplite.sqlite'
@@ -116,7 +120,7 @@ def normalize_sql_value(value: Any) -> Any:
       or isinstance(value, np.ndarray)
   ):
     return [normalize_sql_value(v) for v in value]
-  if isinstance(value, interface.LabelType):
+  if isinstance(value, datatypes.LabelType):
     return value.value
   elif isinstance(value, dt.datetime):
     return value.isoformat()
@@ -739,7 +743,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       raise RuntimeError('Error inserting the deployment into the database.')
     return deployment_id
 
-  def get_deployment(self, deployment_id: int) -> interface.Deployment:
+  def get_deployment(self, deployment_id: int) -> datatypes.Deployment:
     """Get a deployment from the database."""
 
     deployment_id = int(deployment_id)
@@ -758,7 +762,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       raise KeyError(f'Deployment id not found: {deployment_id}')
 
     columns = [col[0] for col in cursor.description]
-    return interface.Deployment(**dict(zip(columns, result)))
+    return datatypes.Deployment(**dict(zip(columns, result)))
 
   def remove_deployment(self, deployment_id: int) -> None:
     """Remove a deployment from the database."""
@@ -835,7 +839,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       raise RuntimeError('Error inserting the recording into the database.')
     return recording_id
 
-  def get_recording(self, recording_id: int) -> interface.Recording:
+  def get_recording(self, recording_id: int) -> datatypes.Recording:
     """Get a recording from the database."""
 
     recording_id = int(recording_id)
@@ -854,7 +858,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       raise KeyError(f'Recording id not found: {recording_id}')
 
     columns = [col[0] for col in cursor.description]
-    recording = interface.Recording(**dict(zip(columns, result)))
+    recording = datatypes.Recording(**dict(zip(columns, result)))
     if recording.datetime is not None:
       recording.datetime = dt.datetime.fromisoformat(recording.datetime)
     return recording
@@ -1045,7 +1049,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       self,
       window_id: int,
       include_embedding: bool = False,
-  ) -> interface.Window:
+  ) -> datatypes.Window:
     """Get a window from the database."""
 
     window_id = int(window_id)
@@ -1064,7 +1068,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       raise KeyError(f'Window id not found: {window_id}')
 
     columns = [col[0] for col in cursor.description]
-    window = interface.Window(
+    window = datatypes.Window(
         embedding=None,
         **dict(zip(columns, result)),
     )
@@ -1145,7 +1149,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       recording_id: int,
       offsets: list[float],
       label: str,
-      label_type: interface.LabelType,
+      label_type: datatypes.LabelType,
       provenance: str,
       handle_duplicates: Literal[
           'allow', 'overwrite', 'skip', 'error'
@@ -1191,7 +1195,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       raise RuntimeError('Error inserting the annotation into the database.')
     return cursor.lastrowid
 
-  def get_annotation(self, annotation_id: int) -> interface.Annotation:
+  def get_annotation(self, annotation_id: int) -> datatypes.Annotation:
     """Get an annotation from the database."""
 
     annotation_id = int(annotation_id)
@@ -1210,8 +1214,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       raise KeyError(f'Annotation id not found: {annotation_id}')
 
     columns = [col[0] for col in cursor.description]
-    annotation = interface.Annotation(**dict(zip(columns, result)))
-    annotation.label_type = interface.LabelType(annotation.label_type)
+    annotation = datatypes.Annotation(**dict(zip(columns, result)))
+    annotation.label_type = datatypes.LabelType(annotation.label_type)
     return annotation
 
   def remove_annotation(self, annotation_id: int) -> None:
@@ -1328,7 +1332,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   def get_all_deployments(
       self,
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
-  ) -> Sequence[interface.Deployment]:
+  ) -> Sequence[datatypes.Deployment]:
     """Get all deployments from the database."""
 
     cursor = self._get_cursor()
@@ -1345,7 +1349,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
     columns = [col[0] for col in cursor.description]
     deployments = [
-        interface.Deployment(**dict(zip(columns, result)))
+        datatypes.Deployment(**dict(zip(columns, result)))
         for result in cursor.fetchall()
     ]
     return deployments
@@ -1353,7 +1357,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   def get_all_recordings(
       self,
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
-  ) -> Sequence[interface.Recording]:
+  ) -> Sequence[datatypes.Recording]:
     """Get all recordings from the database."""
 
     cursor = self._get_cursor()
@@ -1371,7 +1375,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     recordings = []
     columns = [col[0] for col in cursor.description]
     for result in cursor.fetchall():
-      recording = interface.Recording(**dict(zip(columns, result)))
+      recording = datatypes.Recording(**dict(zip(columns, result)))
       if recording.datetime is not None:
         recording.datetime = dt.datetime.fromisoformat(recording.datetime)
       recordings.append(recording)
@@ -1381,7 +1385,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       self,
       include_embedding: bool = False,
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
-  ) -> Sequence[interface.Window]:
+  ) -> Sequence[datatypes.Window]:
     """Get all windows from the database."""
 
     cursor = self._get_cursor()
@@ -1399,7 +1403,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     windows = []
     columns = [col[0] for col in cursor.description]
     for result in cursor.fetchall():
-      window = interface.Window(
+      window = datatypes.Window(
           embedding=None,
           **dict(zip(columns, result)),
       )
@@ -1411,7 +1415,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   def get_all_annotations(
       self,
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
-  ) -> Sequence[interface.Annotation]:
+  ) -> Sequence[datatypes.Annotation]:
     """Get all annotations from the database."""
 
     cursor = self._get_cursor()
@@ -1429,14 +1433,14 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     annotations = []
     columns = [col[0] for col in cursor.description]
     for result in cursor.fetchall():
-      annotation = interface.Annotation(**dict(zip(columns, result)))
-      annotation.label_type = interface.LabelType(annotation.label_type)
+      annotation = datatypes.Annotation(**dict(zip(columns, result)))
+      annotation.label_type = datatypes.LabelType(annotation.label_type)
       annotations.append(annotation)
     return annotations
 
   def get_all_labels(
       self,
-      label_type: interface.LabelType | None = None,
+      label_type: datatypes.LabelType | None = None,
   ) -> Sequence[str]:
     """Get all distinct labels from the database."""
 
@@ -1461,7 +1465,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
   def count_each_label(
       self,
-      label_type: interface.LabelType | None = None,
+      label_type: datatypes.LabelType | None = None,
   ) -> collections.Counter[str]:
     """Count each label in the database, ignoring provenance."""
 
@@ -1500,3 +1504,54 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   def get_embedding_dtype(self) -> type[Any]:
     """Get the embedding data type."""
     return self._embedding_dtype
+
+  def search(
+      self,
+      query_embedding: np.ndarray,
+      search_list_size: int,
+      approximate: bool = True,
+      target_score: float | None = None,
+      score_fn_name: str = 'dot',
+      **kwargs: Any,
+  ) -> search_results.TopKSearchResults:
+    """Search for neighbors of the query embedding.
+
+    Args:
+      query_embedding: The query embedding vector.
+      search_list_size: The number of results to return.
+      approximate: Whether to use approximate search.
+      target_score: If set, search for examples near this score.
+      score_fn_name: The name of the score function to use. Likely ignored if
+        `approximate` is True, as the underlying indexed score function will be
+        used.
+      **kwargs: Additional keyword arguments to pass to the search function.
+
+    Returns:
+      A TopKSearchResults object containing the search results.
+    """
+    if not approximate and target_score is not None:
+      return super().search(
+          query_embedding=query_embedding,
+          search_list_size=search_list_size,
+          approximate=approximate,
+          target_score=target_score,
+          score_fn_name=score_fn_name,
+          **kwargs,
+      )
+
+    if target_score is not None:
+      raise ValueError(
+          'Approximate search does not support target_score sampling.'
+      )
+
+    ann_matches = self.ui.search(
+        query_embedding, count=search_list_size, exact=not approximate
+    )
+    results = search_results.TopKSearchResults(top_k=search_list_size)
+    for k, d in zip(ann_matches.keys, ann_matches.distances):
+      # Usearch with IP returns 1 - inner_product.
+      # We want higher is better, so 1 - d.
+      results.update(search_results.SearchResult(k, 1.0 - d))
+    score_fn = score_functions.get_score_fn(score_fn_name)
+    results = brutalism.rerank(query_embedding, results, self, score_fn)
+    return results

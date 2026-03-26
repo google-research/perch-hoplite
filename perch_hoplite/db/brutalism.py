@@ -15,13 +15,13 @@
 
 """Brute force search and reranking utilities."""
 
-from collections.abc import Callable
 import concurrent
 import threading
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 from perch_hoplite.db import interface
+from perch_hoplite.db import score_functions
 from perch_hoplite.db import search_results
 
 
@@ -42,12 +42,12 @@ def threaded_brute_search(
     db: interface.HopliteDBInterface,
     query_embedding: np.ndarray,
     search_list_size: int,
-    score_fn: Callable[[np.ndarray, np.ndarray], float],
+    score_fn: score_functions.ScoreFn,
     batch_size: int = 1024,
     max_workers: int = 8,
     sample_size: int | float | None = None,
     rng_seed: int | None = None,
-) -> tuple[search_results.TopKSearchResults, np.ndarray]:
+) -> search_results.TopKSearchResults:
   """Performs a brute-force search for neighbors of the query embedding.
 
   Args:
@@ -63,8 +63,7 @@ def threaded_brute_search(
     rng_seed: Random number generator seed to use for sampled search.
 
   Returns:
-    A TopKSearchResults object containing the search results, and a list of
-    all scores computed during the search.
+    A TopKSearchResults object containing the search results.
   """
   state = {}
   state['search_list_size'] = search_list_size
@@ -88,27 +87,24 @@ def threaded_brute_search(
               brute_search_worker_fn, ids[q : q + batch_size], state
           )
       )
-    all_scores = []
     for f in futures:
       idxes, scores = f.result()
-      all_scores.append(scores)
       for idx, score in zip(idxes, scores):
         if not results.will_filter(idx, score):
           results.update(
               search_results.SearchResult(idx, score), force_insert=True
           )
-  all_scores = np.concatenate(all_scores)
-  return results, all_scores
+  return results
 
 
 def brute_search(
     db: interface.HopliteDBInterface,
     query_embedding: np.ndarray,
     search_list_size: int,
-    score_fn: Callable[[np.ndarray, np.ndarray], float],
+    score_fn: score_functions.ScoreFn,
     sample_size: int | float | None = None,
     rng_seed: int | None = None,
-) -> tuple[search_results.TopKSearchResults, np.ndarray]:
+) -> search_results.TopKSearchResults:
   """Performs a brute-force search for neighbors of the query embedding.
 
   Args:
@@ -122,22 +118,19 @@ def brute_search(
     rng_seed: Random number generator seed to use for sampled search.
 
   Returns:
-    A TopKSearchResults object containing the search results, and a list of
-    all scores computed during the search.
+    A TopKSearchResults object containing the search results.
   """
   results = search_results.TopKSearchResults(search_list_size)
-  all_scores = []
   ids = get_brute_search_ids(db, sample_size, rng_seed)
   for idx in ids:
     target_embedding = db.get_embedding(idx)
     score = score_fn(query_embedding, target_embedding)
-    all_scores.append(score)
     # Check filtering and then force insert to avoid creating a SearchResult
     # object for discarded objects. This saves a small amount of time in the
     # inner loop.
     if not results.will_filter(idx, score):
       results.update(search_results.SearchResult(idx, score), force_insert=True)
-  return results, np.array(all_scores)
+  return results
 
 
 def get_brute_search_ids(
@@ -157,11 +150,25 @@ def get_brute_search_ids(
   return ids[:sample_size]
 
 
+def get_random_embedding_scores(
+    db: interface.HopliteDBInterface,
+    query_embedding: np.ndarray,
+    score_fn: score_functions.ScoreFn,
+    sample_size: int | float | None = 1024,
+    rng_seed: int | None = None,
+) -> np.ndarray:
+  """Get scores for a random sample of embeddings."""
+  ids = get_brute_search_ids(db, sample_size, rng_seed)
+  embeddings = db.get_embeddings_batch(ids)
+  scores = score_fn(embeddings, query_embedding)
+  return cast(np.ndarray, scores)
+
+
 def rerank(
     query_embedding: np.ndarray,
     results: search_results.TopKSearchResults,
     db: interface.HopliteDBInterface,
-    score_fn: Callable[[np.ndarray, np.ndarray], float],
+    score_fn: score_functions.ScoreFn,
 ) -> search_results.TopKSearchResults:
   """Rescore the search results using a different score function."""
   new_results = search_results.TopKSearchResults(results.top_k)

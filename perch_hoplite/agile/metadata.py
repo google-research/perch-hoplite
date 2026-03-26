@@ -21,7 +21,7 @@ from typing import Any
 
 from etils import epath
 import pandas as pd
-from perch_hoplite.db import interface as hoplite_interface
+from perch_hoplite.db import datatypes
 
 
 @dataclasses.dataclass
@@ -83,9 +83,9 @@ class AgileMetadata:
   recording_metadata: dict[str, dict[str, Any]] = dataclasses.field(
       default_factory=dict
   )
-  annotations: collections.defaultdict[
-      str, list[hoplite_interface.Annotation]
-  ] = dataclasses.field(default_factory=lambda: collections.defaultdict(list))
+  annotations: collections.defaultdict[str, list[datatypes.Annotation]] = (
+      dataclasses.field(default_factory=lambda: collections.defaultdict(list))
+  )
   fields: dict[str, MetadataField] = dataclasses.field(default_factory=dict)
 
   @classmethod
@@ -117,14 +117,14 @@ class AgileMetadata:
     if annotations_df is not None and not annotations_df.empty:
       for _, row in annotations_df.iterrows():
         label_type = None
-        for lt in hoplite_interface.LabelType:
+        for lt in datatypes.LabelType:
           if row['label_type'].lower() == lt.name.lower():
             label_type = lt
             break
         if label_type is None:
           continue
         annotations[row['recording']].append(
-            hoplite_interface.Annotation(
+            datatypes.Annotation(
                 id=-1,
                 recording_id=-1,
                 label=row['label'],
@@ -281,6 +281,6 @@ class AgileMetadata:
 
   def get_recording_annotations(
       self, recording: str
-  ) -> list[hoplite_interface.Annotation]:
+  ) -> list[datatypes.Annotation]:
     """Returns annotations for the recording."""
     return self.annotations[recording]

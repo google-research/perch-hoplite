@@ -17,10 +17,15 @@
 
 from ml_collections import config_dict
 import numpy as np
+from perch_hoplite.db import datatypes
 from perch_hoplite.db import in_mem_impl
 from perch_hoplite.db import interface
 from perch_hoplite.db import sqlite_usearch_impl
 
+# DB types for testing.
+DB_TYPES = ('in_mem', 'sqlite_usearch')
+DB_TYPE_NAMED_PAIRS = (('in_mem-sqlite_usearch', 'in_mem', 'sqlite_usearch'),)
+PERSISTENT_DB_TYPES = ('sqlite_usearch',)
 
 CLASS_LABELS = ('alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta')
 
@@ -140,9 +145,9 @@ def add_random_labels(
     if rng.random() < unlabeled_prob:
       continue
     if rng.random() < positive_label_prob:
-      label_type = interface.LabelType.POSITIVE
+      label_type = datatypes.LabelType.POSITIVE
     else:
-      label_type = interface.LabelType.NEGATIVE
+      label_type = datatypes.LabelType.NEGATIVE
     window = db.get_window(idx)
     db.insert_annotation(
         recording_id=window.recording_id,

@@ -21,7 +21,7 @@ import dataclasses
 from etils import epath
 from ml_collections import config_dict
 from perch_hoplite import audio_io
-from perch_hoplite.db import interface as hoplite_interface
+from perch_hoplite.db import datatypes
 import tqdm
 
 
@@ -48,7 +48,7 @@ class SourceId:
 
 
 @dataclasses.dataclass
-class AudioSourceConfig(hoplite_interface.HopliteConfig):
+class AudioSourceConfig(datatypes.HopliteConfig):
   """Configuration for embedding a collection of audio sources.
 
   Attributes:
@@ -81,7 +81,7 @@ class AudioSourceConfig(hoplite_interface.HopliteConfig):
 
 
 @dataclasses.dataclass
-class AudioSources(hoplite_interface.HopliteConfig):
+class AudioSources(datatypes.HopliteConfig):
   """A collection of AudioSourceConfig, with SourceId iterator."""
 
   audio_globs: tuple[AudioSourceConfig, ...]

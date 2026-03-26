@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 from ml_collections import config_dict
 import numpy as np
+from perch_hoplite.db import datatypes
 from perch_hoplite.db import interface
 
 
@@ -122,7 +123,7 @@ class MultiDBWrapper(interface.HopliteDBInterface):
   ) -> int:
     raise NotImplementedError()
 
-  def get_deployment(self, deployment_id: int) -> interface.Deployment:
+  def get_deployment(self, deployment_id: int) -> datatypes.Deployment:
     raise NotImplementedError()
 
   def remove_deployment(self, deployment_id: int) -> None:
@@ -137,7 +138,7 @@ class MultiDBWrapper(interface.HopliteDBInterface):
   ) -> int:
     raise NotImplementedError()
 
-  def get_recording(self, recording_id: int) -> interface.Recording:
+  def get_recording(self, recording_id: int) -> datatypes.Recording:
     raise NotImplementedError()
 
   def remove_recording(self, recording_id: int) -> None:
@@ -159,7 +160,7 @@ class MultiDBWrapper(interface.HopliteDBInterface):
       self,
       window_id: int,
       include_embedding: bool = False,
-  ) -> interface.Window:
+  ) -> datatypes.Window:
     raise NotImplementedError()
 
   def get_embedding(self, window_id: int) -> np.ndarray:
@@ -173,7 +174,7 @@ class MultiDBWrapper(interface.HopliteDBInterface):
       recording_id: int,
       offsets: list[float],
       label: str,
-      label_type: interface.LabelType,
+      label_type: datatypes.LabelType,
       provenance: str,
       handle_duplicates: Literal[
           "allow", "overwrite", "skip", "error"
@@ -182,7 +183,7 @@ class MultiDBWrapper(interface.HopliteDBInterface):
   ) -> int:
     raise NotImplementedError()
 
-  def get_annotation(self, annotation_id: int) -> interface.Annotation:
+  def get_annotation(self, annotation_id: int) -> datatypes.Annotation:
     raise NotImplementedError()
 
   def remove_annotation(self, annotation_id: int) -> None:
@@ -207,37 +208,37 @@ class MultiDBWrapper(interface.HopliteDBInterface):
   def get_all_deployments(
       self,
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
-  ) -> Sequence[interface.Deployment]:
+  ) -> Sequence[datatypes.Deployment]:
     raise NotImplementedError()
 
   def get_all_recordings(
       self,
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
-  ) -> Sequence[interface.Recording]:
+  ) -> Sequence[datatypes.Recording]:
     raise NotImplementedError()
 
   def get_all_windows(
       self,
       include_embedding: bool = False,
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
-  ) -> Sequence[interface.Window]:
+  ) -> Sequence[datatypes.Window]:
     raise NotImplementedError()
 
   def get_all_annotations(
       self,
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
-  ) -> Sequence[interface.Annotation]:
+  ) -> Sequence[datatypes.Annotation]:
     raise NotImplementedError()
 
   def get_all_labels(
       self,
-      label_type: interface.LabelType | None = None,
+      label_type: datatypes.LabelType | None = None,
   ) -> Sequence[str]:
     raise NotImplementedError()
 
   def count_each_label(
       self,
-      label_type: interface.LabelType | None = None,
+      label_type: datatypes.LabelType | None = None,
   ) -> collections.Counter[str]:
     raise NotImplementedError()
 

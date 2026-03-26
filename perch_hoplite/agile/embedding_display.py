@@ -30,6 +30,7 @@ from matplotlib import pyplot as plt
 from ml_collections import config_dict
 import numpy as np
 from perch_hoplite import audio_io
+from perch_hoplite.db import datatypes
 from perch_hoplite.db import interface
 from perch_hoplite.db import search_results
 
@@ -164,18 +165,18 @@ class EmbeddingDisplay:
   frame_rate: int = 100
   audio: np.ndarray | None = None
   spectrogram: np.ndarray | None = None
-  labels: Sequence[interface.Annotation] = ()
-  init_label_type: interface.LabelType | None = None
+  labels: Sequence[datatypes.Annotation] = ()
+  init_label_type: datatypes.LabelType | None = None
 
   LABEL_TYPE_TO_BUTTON_INFO = {
       None: dict(icon='', button_style=''),
-      interface.LabelType.POSITIVE: dict(
+      datatypes.LabelType.POSITIVE: dict(
           icon='plus-circle', button_style='success'
       ),
-      interface.LabelType.NEGATIVE: dict(
+      datatypes.LabelType.NEGATIVE: dict(
           icon='minus-circle', button_style='warning'
       ),
-      interface.LabelType.UNCERTAIN: dict(
+      datatypes.LabelType.UNCERTAIN: dict(
           icon='question-circle', button_style='info'
       ),
   }
@@ -185,19 +186,19 @@ class EmbeddingDisplay:
 
     def button_callback(x):
       if x.value is None:  # uninitialized => positive
-        x.value = interface.LabelType.POSITIVE
+        x.value = datatypes.LabelType.POSITIVE
         x.icon = 'plus-circle'
         x.button_style = 'success'
-      elif x.value == interface.LabelType.POSITIVE:  # positive => negative
-        x.value = interface.LabelType.NEGATIVE
+      elif x.value == datatypes.LabelType.POSITIVE:  # positive => negative
+        x.value = datatypes.LabelType.NEGATIVE
         x.icon = 'minus-circle'
         x.button_style = 'warning'
-      elif x.value == interface.LabelType.NEGATIVE:  # negative => uncertain
-        x.value = interface.LabelType.UNCERTAIN
+      elif x.value == datatypes.LabelType.NEGATIVE:  # negative => uncertain
+        x.value = datatypes.LabelType.UNCERTAIN
         x.icon = 'question-circle'
         x.button_style = 'info'
       elif (
-          x.value == interface.LabelType.UNCERTAIN
+          x.value == datatypes.LabelType.UNCERTAIN
       ):  # uncertain => uninitialized
         x.value = None
         x.icon = ''
@@ -284,17 +285,17 @@ class EmbeddingDisplay:
       self,
       provenance: str,
       skip_uncertain: bool = True,
-  ) -> Sequence[interface.Annotation]:
+  ) -> Sequence[datatypes.Annotation]:
     """Get the labels for this example."""
 
     labels = []
     for lbl, w in self.widgets.items():
       if w.value is None:  # uninitialized
         continue
-      if w.value == interface.LabelType.UNCERTAIN and skip_uncertain:
+      if w.value == datatypes.LabelType.UNCERTAIN and skip_uncertain:
         continue
       labels.append(
-          interface.Annotation(
+          datatypes.Annotation(
               id=-1,
               recording_id=self.recording_id,
               offsets=self.offsets,
@@ -309,17 +310,17 @@ class EmbeddingDisplay:
       self,
       provenance: str,
       skip_uncertain: bool = True,
-  ) -> tuple[int, Sequence[interface.Annotation]]:
+  ) -> tuple[int, Sequence[datatypes.Annotation]]:
     """Get the annotated windows for this example."""
 
     labels = []
     for lbl, w in self.widgets.items():
       if w.value is None:  # uninitialized
         continue
-      if w.value == interface.LabelType.UNCERTAIN and skip_uncertain:
+      if w.value == datatypes.LabelType.UNCERTAIN and skip_uncertain:
         continue
       labels.append(
-          interface.Annotation(
+          datatypes.Annotation(
               id=-1,
               recording_id=self.recording_id,
               offsets=self.offsets,
@@ -489,7 +490,7 @@ class EmbeddingDisplayGroup:
       self,
       provenance: str,
       skip_uncertain: bool = True,
-  ) -> Sequence[interface.Annotation]:
+  ) -> Sequence[datatypes.Annotation]:
     labels = []
     for member in self.members:
       labels.extend(member.harvest_labels(provenance, skip_uncertain))
@@ -499,7 +500,7 @@ class EmbeddingDisplayGroup:
       self,
       provenance: str,
       skip_uncertain: bool = True,
-  ) -> Mapping[int, Sequence[interface.Annotation]]:
+  ) -> Mapping[int, Sequence[datatypes.Annotation]]:
     annotations_dict = {}
     for member in self.members:
       window_id, annotations = member.harvest_annotated_window(

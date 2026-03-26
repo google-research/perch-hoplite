@@ -21,7 +21,7 @@ from typing import Sequence
 
 from ml_collections import config_dict
 import numpy as np
-from perch_hoplite.db import interface
+from perch_hoplite.db import datatypes
 from perch_hoplite.db import search_results
 import scipy
 
@@ -40,14 +40,14 @@ class ValidationExample:
   """
 
   window_id: int
-  label_type: interface.LabelType | None
+  label_type: datatypes.LabelType | None
   score: float
   bin: int
   bin_weight: float
 
 
 @dataclasses.dataclass
-class CallDensityConfig(interface.HopliteConfig):
+class CallDensityConfig(datatypes.HopliteConfig):
   """Config dataclass for call density estimation."""
 
   study_name: str
@@ -58,7 +58,7 @@ class CallDensityConfig(interface.HopliteConfig):
 
   window_ids: dataclasses.InitVar[list[int]]
   logits: dataclasses.InitVar[list[float]]
-  annotations: dataclasses.InitVar[list[interface.Annotation | None] | None] = (
+  annotations: dataclasses.InitVar[list[datatypes.Annotation | None] | None] = (
       None
   )
 
@@ -76,7 +76,7 @@ class CallDensityConfig(interface.HopliteConfig):
       self,
       window_ids: list[int],
       logits: list[float],
-      annotations: list[interface.Annotation | None] | None,
+      annotations: list[datatypes.Annotation | None] | None,
   ) -> None:
     """Post-init initialization."""
 
@@ -135,9 +135,9 @@ class CallDensityConfig(interface.HopliteConfig):
 
   def select_validation_examples(
       self,
-      label_types: Sequence[interface.LabelType | None] = (
-          interface.LabelType.POSITIVE,
-          interface.LabelType.NEGATIVE,
+      label_types: Sequence[datatypes.LabelType | None] = (
+          datatypes.LabelType.POSITIVE,
+          datatypes.LabelType.NEGATIVE,
       ),
   ) -> list[ValidationExample]:
     """Select validation examples with the given label types.
@@ -161,7 +161,7 @@ class CallDensityConfig(interface.HopliteConfig):
 
   def update_from_annotated_windows(
       self,
-      annotations_dict: dict[int, list[interface.Annotation]],
+      annotations_dict: dict[int, list[datatypes.Annotation]],
   ) -> None:
     """Update examples from annotations."""
 
@@ -194,9 +194,9 @@ def estimate_call_density(
   bin_weights = collections.defaultdict(float)
   for ex in examples:
     bin_weights[ex.bin] = ex.bin_weight
-    if ex.label_type == interface.LabelType.POSITIVE:
+    if ex.label_type == datatypes.LabelType.POSITIVE:
       bin_pos[ex.bin] += 1
-    elif ex.label_type == interface.LabelType.NEGATIVE:
+    elif ex.label_type == datatypes.LabelType.NEGATIVE:
       bin_neg[ex.bin] += 1
 
   # Create beta distributions.
@@ -259,9 +259,9 @@ def estimate_roc_auc(
   bin_weights = collections.defaultdict(float)
   for ex in examples:
     bin_weights[ex.bin] = ex.bin_weight
-    if ex.label_type == interface.LabelType.POSITIVE:
+    if ex.label_type == datatypes.LabelType.POSITIVE:
       bin_pos[ex.bin] += 1
-    elif ex.label_type == interface.LabelType.NEGATIVE:
+    elif ex.label_type == datatypes.LabelType.NEGATIVE:
       bin_neg[ex.bin] += 1
 
   # P(+|b), P(-|b)
@@ -298,12 +298,12 @@ def estimate_roc_auc(
     bin_pos_scores = np.array([
         v.score
         for v in examples
-        if v.bin == b and v.label_type == interface.LabelType.POSITIVE
+        if v.bin == b and v.label_type == datatypes.LabelType.POSITIVE
     ])
     bin_neg_scores = np.array([
         v.score
         for v in examples
-        if v.bin == b and v.label_type == interface.LabelType.NEGATIVE
+        if v.bin == b and v.label_type == datatypes.LabelType.NEGATIVE
     ])
     # If either is empty, there's no chance of pulling a (pos, neg) pair from
     # this bin, so we can continue.

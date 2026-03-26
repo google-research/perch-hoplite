@@ -28,6 +28,7 @@ import numpy as np
 from perch_hoplite import audio_io
 from perch_hoplite.agile import metadata
 from perch_hoplite.agile import source_info
+from perch_hoplite.db import datatypes
 from perch_hoplite.db import interface as hoplite_interface
 from perch_hoplite.zoo import model_configs
 from perch_hoplite.zoo import zoo_interface
@@ -35,7 +36,7 @@ import soundfile
 
 
 @dataclasses.dataclass
-class ModelConfig(hoplite_interface.HopliteConfig):
+class ModelConfig(datatypes.HopliteConfig):
   """Configuration for embedding model.
 
   Attributes:

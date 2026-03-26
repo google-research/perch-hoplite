@@ -19,6 +19,7 @@ import dataclasses
 
 from etils import epath
 from ml_collections import config_dict
+from perch_hoplite.db import datatypes
 from perch_hoplite.db import in_mem_impl
 from perch_hoplite.db import interface
 from perch_hoplite.db import sqlite_usearch_impl
@@ -26,7 +27,7 @@ import tqdm
 
 
 @dataclasses.dataclass
-class DBConfig(interface.HopliteConfig):
+class DBConfig(datatypes.HopliteConfig):
   """Configuration for embedding database.
 
   Attributes:

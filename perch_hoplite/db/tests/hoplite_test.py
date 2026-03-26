@@ -21,7 +21,7 @@ import tempfile
 from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.db import brutalism
-from perch_hoplite.db import interface
+from perch_hoplite.db import datatypes
 from perch_hoplite.db import iterators
 from perch_hoplite.db.tests import test_utils
 
@@ -29,11 +29,6 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 EMBEDDING_SIZE = 128
-DB_TYPES = ('in_mem', 'sqlite_usearch')
-DB_TYPE_NAMED_PAIRS = (
-    ('in_mem-sqlite_usearch', 'in_mem', 'sqlite_usearch'),
-)
-PERSISTENT_DB_TYPES = ('sqlite_usearch',)
 
 
 class HopliteTest(parameterized.TestCase):
@@ -47,7 +42,7 @@ class HopliteTest(parameterized.TestCase):
     shutil.rmtree(self.tempdir)
 
   @parameterized.product(
-      db_type=DB_TYPES,
+      db_type=test_utils.DB_TYPES,
       thread_split=(True, False),
   )
   def test_graph_db_interface(self, db_type, thread_split):
@@ -103,7 +98,7 @@ class HopliteTest(parameterized.TestCase):
       self.assertEmpty(embs)
     db.commit()
 
-  @parameterized.product(db_type=PERSISTENT_DB_TYPES)
+  @parameterized.product(db_type=test_utils.PERSISTENT_DB_TYPES)
   def test_persistence(self, db_type):
     rng = np.random.default_rng(42)
     db = test_utils.make_db(self.tempdir, db_type, 1000, rng, EMBEDDING_SIZE)
@@ -129,7 +124,7 @@ class HopliteTest(parameterized.TestCase):
       test_emb = test_db.get_embedding(idx)
       np.testing.assert_equal(emb, test_emb)
 
-  @parameterized.product(db_type=DB_TYPES)
+  @parameterized.product(db_type=test_utils.DB_TYPES)
   def test_labels_db_interface(self, db_type):
     rng = np.random.default_rng(42)
     db = test_utils.make_db(self.tempdir, db_type, 1000, rng, EMBEDDING_SIZE)
@@ -138,28 +133,28 @@ class HopliteTest(parameterized.TestCase):
         recording_id=windows[0].recording_id,
         offsets=windows[0].offsets,
         label='hawgoo',
-        label_type=interface.LabelType.POSITIVE,
+        label_type=datatypes.LabelType.POSITIVE,
         provenance='human',
     )
     db.insert_annotation(
         recording_id=windows[0].recording_id,
         offsets=windows[0].offsets,
         label='hawgoo',
-        label_type=interface.LabelType.POSITIVE,
+        label_type=datatypes.LabelType.POSITIVE,
         provenance='machine',
     )
     db.insert_annotation(
         recording_id=windows[1].recording_id,
         offsets=windows[1].offsets,
         label='hawgoo',
-        label_type=interface.LabelType.POSITIVE,
+        label_type=datatypes.LabelType.POSITIVE,
         provenance='machine',
     )
     db.insert_annotation(
         recording_id=windows[0].recording_id,
         offsets=windows[0].offsets,
         label='rewbla',
-        label_type=interface.LabelType.NEGATIVE,
+        label_type=datatypes.LabelType.NEGATIVE,
         provenance='machine',
     )
 
@@ -179,7 +174,7 @@ class HopliteTest(parameterized.TestCase):
       # of provenance.
       got = db.match_window_ids(
           annotations_filter=config_dict.create(
-              eq=dict(label='hawgoo', label_type=interface.LabelType.POSITIVE)
+              eq=dict(label='hawgoo', label_type=datatypes.LabelType.POSITIVE)
           ),
       )
       self.assertSequenceEqual(
@@ -189,7 +184,7 @@ class HopliteTest(parameterized.TestCase):
       # There are no negative 'hawgoo' labels.
       got = db.match_window_ids(
           annotations_filter=config_dict.create(
-              eq=dict(label='hawgoo', label_type=interface.LabelType.NEGATIVE)
+              eq=dict(label='hawgoo', label_type=datatypes.LabelType.NEGATIVE)
           )
       )
       self.assertEmpty(got)
@@ -224,11 +219,11 @@ class HopliteTest(parameterized.TestCase):
 
     with self.subTest('get_class_counts'):
       # 2 positive labels for 'hawgoo' ignoring provenance.
-      got = db.count_each_label(interface.LabelType.POSITIVE)
+      got = db.count_each_label(datatypes.LabelType.POSITIVE)
       self.assertDictEqual(got, {'hawgoo': 2})
 
       # 1 negative label for 'rewbla'.
-      got = db.count_each_label(interface.LabelType.NEGATIVE)
+      got = db.count_each_label(datatypes.LabelType.NEGATIVE)
       self.assertDictEqual(got, {'rewbla': 1})
 
       # 2 labels for 'hawgoo' and 1 for 'rewbla' when counting all labels,
@@ -244,20 +239,20 @@ class HopliteTest(parameterized.TestCase):
           recording_id=windows[0].recording_id,
           offsets=windows[0].offsets,
           label='unique',
-          label_type=interface.LabelType.POSITIVE,
+          label_type=datatypes.LabelType.POSITIVE,
           provenance='human',
       )
       dupe_annotation_id = db.insert_annotation(
           recording_id=windows[0].recording_id,
           offsets=windows[0].offsets,
           label='unique',
-          label_type=interface.LabelType.POSITIVE,
+          label_type=datatypes.LabelType.POSITIVE,
           provenance='human',
           handle_duplicates='skip',
       )
       self.assertEqual(annotation_id, dupe_annotation_id)
 
-  @parameterized.named_parameters(*DB_TYPE_NAMED_PAIRS)
+  @parameterized.named_parameters(*test_utils.DB_TYPE_NAMED_PAIRS)
   def test_brute_search_impl_agreement(self, target_db_type, source_db_type):
     rng = np.random.default_rng(42)
     source_db = test_utils.make_db(
@@ -275,10 +270,10 @@ class HopliteTest(parameterized.TestCase):
 
     # Check brute-force search agreement.
     query = rng.normal(size=(128,), loc=0, scale=1.0)
-    results_m, _ = brutalism.brute_search(
+    results_m = brutalism.brute_search(
         source_db, query, search_list_size=10, score_fn=np.dot
     )
-    results_s, _ = brutalism.brute_search(
+    results_s = brutalism.brute_search(
         target_db, query, search_list_size=10, score_fn=np.dot
     )
     self.assertLen(results_m.search_results, 10)

@@ -21,6 +21,7 @@ import tempfile
 from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.agile import classifier_data
+from perch_hoplite.db import datatypes
 from perch_hoplite.db import interface
 from perch_hoplite.db.tests import test_utils as db_test_utils
 
@@ -215,32 +216,32 @@ class ClassifierDataTest(absltest.TestCase):
       )
 
     with self.subTest('single_positive_label'):
-      add_label(1, 3, interface.LabelType.POSITIVE)
+      add_label(1, 3, datatypes.LabelType.POSITIVE)
       multihot, mask = data_manager.get_multihot_labels(1)
       np.testing.assert_equal(multihot, (0, 0, 0, 1, 0, 0))
       np.testing.assert_equal(mask, (0, 0, 0, 1, 0, 0))
 
     with self.subTest('single_negative_label'):
-      add_label(2, 3, interface.LabelType.NEGATIVE)
+      add_label(2, 3, datatypes.LabelType.NEGATIVE)
       multihot, mask = data_manager.get_multihot_labels(2)
       np.testing.assert_equal(multihot, (0, 0, 0, 0, 0, 0))
       np.testing.assert_equal(mask, (0, 0, 0, 1, 0, 0))
 
     with self.subTest('disagreeing_labels'):
-      add_label(3, 1, interface.LabelType.POSITIVE)
-      add_label(3, 1, interface.LabelType.POSITIVE)
-      add_label(3, 1, interface.LabelType.POSITIVE)
-      add_label(3, 1, interface.LabelType.NEGATIVE)
+      add_label(3, 1, datatypes.LabelType.POSITIVE)
+      add_label(3, 1, datatypes.LabelType.POSITIVE)
+      add_label(3, 1, datatypes.LabelType.POSITIVE)
+      add_label(3, 1, datatypes.LabelType.NEGATIVE)
       multihot, mask = data_manager.get_multihot_labels(3)
       np.testing.assert_equal(multihot, (0, 0.75, 0, 0, 0, 0))
       np.testing.assert_equal(mask, (0, 1, 0, 0, 0, 0))
 
     with self.subTest('multiple_labels'):
-      add_label(4, 1, interface.LabelType.POSITIVE)
-      add_label(4, 1, interface.LabelType.POSITIVE)
-      add_label(4, 2, interface.LabelType.POSITIVE)
-      add_label(4, 3, interface.LabelType.NEGATIVE)
-      add_label(4, 5, interface.LabelType.POSITIVE)
+      add_label(4, 1, datatypes.LabelType.POSITIVE)
+      add_label(4, 1, datatypes.LabelType.POSITIVE)
+      add_label(4, 2, datatypes.LabelType.POSITIVE)
+      add_label(4, 3, datatypes.LabelType.NEGATIVE)
+      add_label(4, 5, datatypes.LabelType.POSITIVE)
       multihot, mask = data_manager.get_multihot_labels(4)
       np.testing.assert_equal(multihot, (0, 1, 1, 0, 0, 1))
       np.testing.assert_equal(mask, (0, 1, 1, 1, 0, 1))

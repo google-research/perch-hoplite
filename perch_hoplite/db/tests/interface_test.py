@@ -15,7 +15,7 @@
 
 """Tests for the embeddings databases interface."""
 
-from perch_hoplite.db import interface
+from perch_hoplite.db import datatypes as interface
 
 from absl.testing import absltest
 

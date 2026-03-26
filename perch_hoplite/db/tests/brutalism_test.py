@@ -55,7 +55,7 @@ class BrutalismTest(parameterized.TestCase):
     db = test_utils.make_db(self.tempdir, db_type, 1000, rng, EMBEDDING_SIZE)
     query_idx = db.match_window_ids(limit=1)[0]
     query_embedding = db.get_embedding(query_idx)
-    results, scores = brutalism.brute_search(
+    results = brutalism.brute_search(
         db,
         query_embedding,
         search_list_size=10,
@@ -65,16 +65,11 @@ class BrutalismTest(parameterized.TestCase):
     )
     got_ids = [r.window_id for r in results]
     if sample_size is None:
-      self.assertEqual(scores.shape, (1000,))
       self.assertIn(query_idx, got_ids)
-    elif isinstance(sample_size, float):
-      self.assertEqual(scores.shape, (int(sample_size * 1000),))
-    else:
-      self.assertEqual(scores.shape, (sample_size,))
     self.assertLen(results.search_results, 10)
 
     # Check agreement of threaded brute search with the non-threaded version.
-    t_results, t_scores = brutalism.threaded_brute_search(
+    t_results = brutalism.threaded_brute_search(
         db,
         query_embedding,
         search_list_size=10,
@@ -83,7 +78,9 @@ class BrutalismTest(parameterized.TestCase):
         sample_size=sample_size,
         rng_seed=42,
     )
-    np.testing.assert_almost_equal(np.sort(t_scores), np.sort(scores))
+    t_got_scores = [r.sort_score for r in t_results]
+    got_scores = [r.sort_score for r in results]
+    np.testing.assert_almost_equal(t_got_scores, got_scores)
     t_got_ids = [r.window_id for r in t_results]
     t_got_scores = [r.sort_score for r in t_results]
     num_equal_to_last = np.sum(np.isclose(t_got_scores, t_got_scores[-1]))
@@ -94,6 +91,21 @@ class BrutalismTest(parameterized.TestCase):
         set(got_ids[:-num_equal_to_last]),
         set(t_got_ids[:-num_equal_to_last]),
     )
+
+  @parameterized.parameters(*test_utils.DB_TYPES)
+  def test_get_random_embedding_scores(self, db_type):
+    rng = np.random.default_rng(42)
+    db = test_utils.make_db(self.tempdir, db_type, 1000, rng, EMBEDDING_SIZE)
+    query_idx = db.match_window_ids(limit=1)[0]
+    query_embedding = db.get_embedding(query_idx)
+    scores = brutalism.get_random_embedding_scores(
+        db,
+        query_embedding,
+        score_fn=score_functions.get_score_fn('cos'),
+        sample_size=64,
+        rng_seed=42,
+    )
+    self.assertEqual(scores.shape, (64,))
 
 
 if __name__ == '__main__':

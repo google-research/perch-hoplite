@@ -19,6 +19,7 @@ import dataclasses
 
 from etils import epath
 from ml_collections import config_dict
+import numpy as np
 from perch_hoplite.agile import embed
 from perch_hoplite.agile import source_info
 from perch_hoplite.db import db_loader
@@ -87,6 +88,9 @@ def load_configs(
     db_config.usearch_cfg = sqlite_usearch_impl.get_default_usearch_config(
         preset_info.embedding_dim
     )
+  elif db_key == 'parquet':
+    db_config.embedding_dim = preset_info.embedding_dim
+    db_config.embedding_dtype = np.float16
 
   return AgileConfigs(
       audio_sources_config=audio_sources,

@@ -72,6 +72,9 @@ mode:
 ```bash
 git clone https://github.com/google-research/perch-hoplite.git
 cd perch-hoplite
+# Create and activate a virtual environment
+uv venv
+source .venv/bin/activate
 uv pip install -e .
 ```
 
@@ -85,6 +88,8 @@ Or install the latest version from GitHub:
 ```bash
 pip install git+https://github.com/google-research/perch-hoplite.git
 ```
+
+### Running the Tests
 
 After installation, you can run the tests to check that everything is working:
 ```bash

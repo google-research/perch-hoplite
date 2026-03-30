@@ -104,6 +104,7 @@ def brute_search(
     score_fn: score_functions.ScoreFn,
     sample_size: int | float | None = None,
     rng_seed: int | None = None,
+    batch_size: int = 4096,
 ) -> search_results.TopKSearchResults:
   """Performs a brute-force search for neighbors of the query embedding.
 
@@ -116,20 +117,25 @@ def brute_search(
       are used. For floats between 0 and 1, sample a proportion of the database.
       For ints, sample the specified number of embeddings.
     rng_seed: Random number generator seed to use for sampled search.
+    batch_size: Number of embeddings to score in each batch.
 
   Returns:
     A TopKSearchResults object containing the search results.
   """
   results = search_results.TopKSearchResults(search_list_size)
   ids = get_brute_search_ids(db, sample_size, rng_seed)
-  for idx in ids:
-    target_embedding = db.get_embedding(idx)
-    score = score_fn(query_embedding, target_embedding)
-    # Check filtering and then force insert to avoid creating a SearchResult
-    # object for discarded objects. This saves a small amount of time in the
-    # inner loop.
-    if not results.will_filter(idx, score):
-      results.update(search_results.SearchResult(idx, score), force_insert=True)
+  for i in range(0, ids.shape[0], batch_size):
+    id_batch = ids[i : i + batch_size]
+    target_embeddings = db.get_embeddings_batch(id_batch)
+    scores = score_fn(target_embeddings, query_embedding)
+    for idx, score in zip(id_batch, scores):
+      # Check filtering and then force insert to avoid creating a SearchResult
+      # object for discarded objects. This saves a small amount of time in the
+      # inner loop.
+      if not results.will_filter(idx, score):
+        results.update(
+            search_results.SearchResult(idx, score), force_insert=True
+        )
   return results
 
 

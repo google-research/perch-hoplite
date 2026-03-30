@@ -43,7 +43,7 @@ tf = [
     "tensorflow>=2.20,<3.0",
 ]
 tf-cuda = [
-    "tensorflow[cuda]>=2.20,<3.0",
+    "tensorflow[and-cuda]>=2.20,<3.0",
 ]
 [build-system]
 requires = ["hatchling"]

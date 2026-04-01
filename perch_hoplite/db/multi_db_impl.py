@@ -96,13 +96,15 @@ class MultiDBWrapper(interface.HopliteDBInterface):
     raise NotImplementedError()
 
   def commit(self) -> None:
-    raise NotImplementedError()
+    for db in self._dbs:
+      db.commit()
 
   def rollback(self) -> None:
-    raise NotImplementedError()
+    for db in self._dbs:
+      db.rollback()
 
   def thread_split(self) -> "MultiDBWrapper":
-    raise NotImplementedError()
+    return MultiDBWrapper([db.thread_split() for db in self._dbs])
 
   def insert_metadata(self, key: str, value: config_dict.ConfigDict) -> None:
     raise NotImplementedError()
@@ -124,10 +126,17 @@ class MultiDBWrapper(interface.HopliteDBInterface):
     raise NotImplementedError()
 
   def get_deployment(self, deployment_id: int) -> datatypes.Deployment:
-    raise NotImplementedError()
+    db_index, internal_id = self._split_id(deployment_id)
+    deployment = self._dbs[db_index].get_deployment(internal_id)
+    # The returned Deployment is the same as the internal Deployment, except
+    # its ID is the external deployment_id argument of get_deployment().
+    return datatypes.Deployment(
+        **deployment.to_kwargs(skip=["id"]), id=deployment_id
+    )
 
   def remove_deployment(self, deployment_id: int) -> None:
-    raise NotImplementedError()
+    db_index, internal_id = self._split_id(deployment_id)
+    self._dbs[db_index].remove_deployment(internal_id)
 
   def insert_recording(
       self,
@@ -136,13 +145,34 @@ class MultiDBWrapper(interface.HopliteDBInterface):
       deployment_id: int | None = None,
       **kwargs: Any,
   ) -> int:
-    raise NotImplementedError()
+    if deployment_id is None:
+      raise NotImplementedError(
+          "MultiDBWrapper requires deployment_id to insert a recording."
+      )
+    db_index, internal_dep_id = self._split_id(deployment_id)
+    internal_rec_id = self._dbs[db_index].insert_recording(
+        filename=filename,
+        datetime=datetime,
+        deployment_id=internal_dep_id,
+        **kwargs,
+    )
+    return self._join_id(db_index, internal_rec_id)
 
   def get_recording(self, recording_id: int) -> datatypes.Recording:
-    raise NotImplementedError()
+    db_index, internal_rec_id = self._split_id(recording_id)
+    recording = self._dbs[db_index].get_recording(internal_rec_id)
+    deployment_id = None
+    if recording.deployment_id is not None:
+      deployment_id = self._join_id(db_index, recording.deployment_id)
+    return datatypes.Recording(
+        **recording.to_kwargs(skip=["id", "deployment_id"]),
+        id=recording_id,
+        deployment_id=deployment_id,
+    )
 
   def remove_recording(self, recording_id: int) -> None:
-    raise NotImplementedError()
+    db_index, internal_id = self._split_id(recording_id)
+    self._dbs[db_index].remove_recording(internal_id)
 
   def insert_window(
       self,
@@ -154,20 +184,36 @@ class MultiDBWrapper(interface.HopliteDBInterface):
       ] = "error",
       **kwargs: Any,
   ) -> int:
-    raise NotImplementedError()
+    db_index, internal_rec_id = self._split_id(recording_id)
+    internal_win_id = self._dbs[db_index].insert_window(
+        recording_id=internal_rec_id,
+        offsets=offsets,
+        embedding=embedding,
+        handle_duplicates=handle_duplicates,
+        **kwargs,
+    )
+    return self._join_id(db_index, internal_win_id)
 
   def get_window(
       self,
       window_id: int,
       include_embedding: bool = False,
   ) -> datatypes.Window:
-    raise NotImplementedError()
+    db_index, internal_win_id = self._split_id(window_id)
+    window = self._dbs[db_index].get_window(internal_win_id, include_embedding)
+    return datatypes.Window(
+        **window.to_kwargs(skip=["id", "recording_id"]),
+        id=window_id,
+        recording_id=self._join_id(db_index, window.recording_id),
+    )
 
   def get_embedding(self, window_id: int) -> np.ndarray:
-    raise NotImplementedError()
+    db_index, internal_win_id = self._split_id(window_id)
+    return self._dbs[db_index].get_embedding(internal_win_id)
 
   def remove_window(self, window_id: int) -> None:
-    raise NotImplementedError()
+    db_index, internal_win_id = self._split_id(window_id)
+    self._dbs[db_index].remove_window(internal_win_id)
 
   def insert_annotation(
       self,
@@ -181,16 +227,33 @@ class MultiDBWrapper(interface.HopliteDBInterface):
       ] = "error",
       **kwargs: Any,
   ) -> int:
-    raise NotImplementedError()
+    db_index, internal_rec_id = self._split_id(recording_id)
+    internal_ann_id = self._dbs[db_index].insert_annotation(
+        recording_id=internal_rec_id,
+        offsets=offsets,
+        label=label,
+        label_type=label_type,
+        provenance=provenance,
+        handle_duplicates=handle_duplicates,
+        **kwargs,
+    )
+    return self._join_id(db_index, internal_ann_id)
 
   def get_annotation(self, annotation_id: int) -> datatypes.Annotation:
-    raise NotImplementedError()
+    db_index, internal_ann_id = self._split_id(annotation_id)
+    annotation = self._dbs[db_index].get_annotation(internal_ann_id)
+    return datatypes.Annotation(
+        **annotation.to_kwargs(skip=["id", "recording_id"]),
+        id=annotation_id,
+        recording_id=self._join_id(db_index, annotation.recording_id),
+    )
 
   def remove_annotation(self, annotation_id: int) -> None:
-    raise NotImplementedError()
+    db_index, internal_ann_id = self._split_id(annotation_id)
+    self._dbs[db_index].remove_annotation(internal_ann_id)
 
   def count_embeddings(self) -> int:
-    raise NotImplementedError()
+    return sum(db.count_embeddings() for db in self._dbs)
 
   def match_window_ids(
       self,
@@ -203,7 +266,10 @@ class MultiDBWrapper(interface.HopliteDBInterface):
     raise NotImplementedError()
 
   def get_all_projects(self) -> Sequence[str]:
-    raise NotImplementedError()
+    projects = set()
+    for db in self._dbs:
+      projects.update(db.get_all_projects())
+    return sorted(list(projects))
 
   def get_all_deployments(
       self,
@@ -234,16 +300,22 @@ class MultiDBWrapper(interface.HopliteDBInterface):
       self,
       label_type: datatypes.LabelType | None = None,
   ) -> Sequence[str]:
-    raise NotImplementedError()
+    labels = set()
+    for db in self._dbs:
+      labels.update(db.get_all_labels(label_type=label_type))
+    return sorted(list(labels))
 
   def count_each_label(
       self,
       label_type: datatypes.LabelType | None = None,
   ) -> collections.Counter[str]:
-    raise NotImplementedError()
+    counts = collections.Counter()
+    for db in self._dbs:
+      counts.update(db.count_each_label(label_type=label_type))
+    return counts
 
   def get_embedding_dim(self) -> int:
-    raise NotImplementedError()
+    return self._dbs[0].get_embedding_dim()
 
   def get_embedding_dtype(self) -> type[Any]:
-    raise NotImplementedError()
+    return self._dbs[0].get_embedding_dtype()

@@ -20,6 +20,7 @@ import dataclasses
 import functools
 import itertools
 import threading
+import time
 
 from absl import logging
 import audioread
@@ -136,8 +137,11 @@ class EmbedWorker:
     self.audio_sources = audio_sources
     self.audio_worker_threads = audio_worker_threads
     if embedding_model is None:
+      print('Loading model...')
+      st = time.time()
       model_class = model_configs.get_model_class(model_config.model_key)
       self.embedding_model = model_class.from_config(model_config.model_config)
+      print(f'\tModel loading took {time.time() - st} seconds.')
     else:
       self.embedding_model = embedding_model
     self.window_size_s = getattr(self.embedding_model, 'window_size_s')

@@ -20,12 +20,16 @@ import numpy as np
 from perch_hoplite.db import datatypes
 from perch_hoplite.db import in_mem_impl
 from perch_hoplite.db import interface
+from perch_hoplite.db import parquet_impl
 from perch_hoplite.db import sqlite_usearch_impl
 
 # DB types for testing.
-DB_TYPES = ('in_mem', 'sqlite_usearch')
-DB_TYPE_NAMED_PAIRS = (('in_mem-sqlite_usearch', 'in_mem', 'sqlite_usearch'),)
-PERSISTENT_DB_TYPES = ('sqlite_usearch',)
+DB_TYPES = ('in_mem', 'sqlite_usearch', 'parquet')
+DB_TYPE_NAMED_PAIRS = (
+    ('in_mem-sqlite_usearch', 'in_mem', 'sqlite_usearch'),
+    ('in_mem-parquet', 'in_mem', 'parquet'),
+)
+PERSISTENT_DB_TYPES = ('sqlite_usearch', 'parquet')
 
 CLASS_LABELS = ('alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta')
 
@@ -45,6 +49,10 @@ def make_db(
     usearch_cfg = sqlite_usearch_impl.get_default_usearch_config(embedding_dim)
     db = sqlite_usearch_impl.SQLiteUSearchDB.create(
         db_path=path, usearch_cfg=usearch_cfg
+    )
+  elif db_type == 'parquet':
+    db = parquet_impl.ParquetDB.create(
+        db_path=path, embedding_dim=embedding_dim
     )
   else:
     raise ValueError(f'Unknown db type: {db_type}')

@@ -22,6 +22,7 @@ from ml_collections import config_dict
 from perch_hoplite.db import datatypes
 from perch_hoplite.db import in_mem_impl
 from perch_hoplite.db import interface
+from perch_hoplite.db import parquet_impl
 from perch_hoplite.db import sqlite_usearch_impl
 import tqdm
 
@@ -44,6 +45,8 @@ class DBConfig(datatypes.HopliteConfig):
       return sqlite_usearch_impl.SQLiteUSearchDB.create(**self.db_config)
     elif self.db_key == 'in_mem':
       return in_mem_impl.InMemoryGraphSearchDB.create(**self.db_config)
+    elif self.db_key == 'parquet':
+      return parquet_impl.ParquetDB.create(**self.db_config)
     else:
       raise ValueError(f'Unknown db_key: {self.db_key}')
 

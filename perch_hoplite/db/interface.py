@@ -636,15 +636,24 @@ class HopliteDBInterface(abc.ABC):
   def get_all_windows(
       self,
       include_embedding: bool = False,
+      deployments_filter: config_dict.ConfigDict | None = None,
+      recordings_filter: config_dict.ConfigDict | None = None,
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
+      annotations_filter: config_dict.ConfigDict | None = None,
   ) -> Sequence[datatypes.Window]:
     """Get all windows from the database.
 
     Args:
       include_embedding: Whether to include the embedding vector in the returned
         Window objects.
+      deployments_filter: If provided, only retrieve windows that have
+        deployments matching constraints specified by this filter.
+      recordings_filter: If provided, only retrieve windows that have recordings
+        matching constraints specified by this filter.
       filter: If provided, only retrieve windows matching constraints specified
         by this filter.
+      annotations_filter: If provided, only retrieve windows that have
+        annotations matching constraints specified by this filter.
 
     Returns:
       A sequence of all matching windows in the database.

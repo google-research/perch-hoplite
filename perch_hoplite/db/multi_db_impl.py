@@ -286,7 +286,10 @@ class MultiDBWrapper(interface.HopliteDBInterface):
   def get_all_windows(
       self,
       include_embedding: bool = False,
+      deployments_filter: config_dict.ConfigDict | None = None,
+      recordings_filter: config_dict.ConfigDict | None = None,
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
+      annotations_filter: config_dict.ConfigDict | None = None,
   ) -> Sequence[datatypes.Window]:
     raise NotImplementedError()
 

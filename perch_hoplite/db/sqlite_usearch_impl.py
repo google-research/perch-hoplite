@@ -294,6 +294,57 @@ def format_sql_where_conditions(
   return ' AND '.join(conditions), values
 
 
+def _get_window_query_components(
+    deployments_filter: config_dict.ConfigDict | None = None,
+    recordings_filter: config_dict.ConfigDict | None = None,
+    windows_filter: config_dict.ConfigDict | None = None,
+    annotations_filter: config_dict.ConfigDict | None = None,
+) -> tuple[str, str, list[Any]]:
+  """Construct FROM, WHERE, and VALUES for window SQL queries."""
+  # Pick which tables need to be queried.
+  query_tables = {'windows'}
+  if annotations_filter:
+    query_tables |= {'annotations'}
+  if recordings_filter:
+    query_tables |= {'recordings'}
+  if deployments_filter:
+    query_tables |= {'recordings', 'deployments'}
+
+  # Build the `FROM ... [JOIN ...]` part of the SQL query.
+  from_clause = 'FROM windows'
+  if 'annotations' in query_tables:
+    from_clause += (
+        ' JOIN annotations ON windows.recording_id = annotations.recording_id'
+        ' AND APPROX_FLOAT_LIST(windows.offsets, annotations.offsets) = TRUE'
+    )
+  if 'recordings' in query_tables:
+    from_clause += ' JOIN recordings ON windows.recording_id = recordings.id'
+  if 'deployments' in query_tables:
+    from_clause += (
+        ' JOIN deployments ON recordings.deployment_id = deployments.id'
+    )
+
+  # Build the `WHERE ...` part of the SQL query.
+  conditions, values = tuple(
+      zip(*[
+          format_sql_where_conditions(
+              deployments_filter, table_prefix='deployments'
+          ),
+          format_sql_where_conditions(
+              recordings_filter, table_prefix='recordings'
+          ),
+          format_sql_where_conditions(windows_filter, table_prefix='windows'),
+          format_sql_where_conditions(
+              annotations_filter, table_prefix='annotations'
+          ),
+      ])
+  )
+  conditions_str = ' AND '.join(c for c in conditions if c)
+  values = list(itertools.chain.from_iterable(values))
+  where_clause = f'WHERE {conditions_str}' if conditions_str else ''
+  return from_clause, where_clause, values
+
+
 @dataclasses.dataclass
 class SQLiteUSearchDB(interface.HopliteDBInterface):
   """SQLite hoplite database, using USearch for vector storage.
@@ -424,6 +475,14 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_labels
         ON annotations(label, label_type, provenance)
+        """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_recordings_deployment_id
+        ON recordings(deployment_id)
+        """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_windows_recording_id
+        ON windows(recording_id)
         """)
 
   @staticmethod
@@ -1247,58 +1306,17 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       limit: int | None = None,
   ) -> Sequence[int]:
     """Get matching window IDs from the database based on given filters."""
-
-    # TODO(stefanistrate): Is it more efficient for large databases to run
-    # multiple SELECT queries (in order: by deployment, by recording, by window,
-    # by annotation) instead of running one giant JOIN?
-
     cursor = self._get_cursor()
-
-    # Pick which tables need to be queried.
-    query_tables = {'windows'}
     if annotations_filter:
-      query_tables |= {'annotations'}
-    if recordings_filter:
-      query_tables |= {'recordings'}
-    if deployments_filter:
-      query_tables |= {'recordings', 'deployments'}
-
-    # Build the `SELECT ... FROM ... [JOIN ...]` part of the SQL query.
-    if 'annotations' in query_tables:
       select_clause = 'SELECT DISTINCT windows.id'
     else:
       select_clause = 'SELECT windows.id'
-    from_clause = 'FROM windows'
-    if 'annotations' in query_tables:
-      from_clause += (
-          ' JOIN annotations ON windows.recording_id = annotations.recording_id'
-          ' AND APPROX_FLOAT_LIST(windows.offsets, annotations.offsets) = TRUE'
-      )
-    if 'recordings' in query_tables:
-      from_clause += ' JOIN recordings ON windows.recording_id = recordings.id'
-    if 'deployments' in query_tables:
-      from_clause += (
-          ' JOIN deployments ON recordings.deployment_id = deployments.id'
-      )
-
-    # Build the `WHERE ...` part of the SQL query.
-    conditions, values = tuple(
-        zip(*[
-            format_sql_where_conditions(
-                annotations_filter, table_prefix='annotations'
-            ),
-            format_sql_where_conditions(windows_filter, table_prefix='windows'),
-            format_sql_where_conditions(
-                recordings_filter, table_prefix='recordings'
-            ),
-            format_sql_where_conditions(
-                deployments_filter, table_prefix='deployments'
-            ),
-        ])
+    from_clause, where_clause, values = _get_window_query_components(
+        deployments_filter=deployments_filter,
+        recordings_filter=recordings_filter,
+        windows_filter=windows_filter,
+        annotations_filter=annotations_filter,
     )
-    conditions_str = ' AND '.join(c for c in conditions if c)
-    values = list(itertools.chain.from_iterable(values))
-    where_clause = f'WHERE {conditions_str}' if conditions_str else ''
 
     # Build the `LIMIT ...` part of the SQL query.
     if limit is None:
@@ -1384,17 +1402,29 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   def get_all_windows(
       self,
       include_embedding: bool = False,
+      deployments_filter: config_dict.ConfigDict | None = None,
+      recordings_filter: config_dict.ConfigDict | None = None,
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
+      annotations_filter: config_dict.ConfigDict | None = None,
   ) -> Sequence[datatypes.Window]:
     """Get all windows from the database."""
-
     cursor = self._get_cursor()
-    conditions_str, values = format_sql_where_conditions(filter)
-    where_clause = f'WHERE {conditions_str}' if conditions_str else ''
+    if annotations_filter:
+      select_clause = 'SELECT DISTINCT windows.*'
+    else:
+      select_clause = 'SELECT windows.*'
+    from_clause, where_clause, values = _get_window_query_components(
+        deployments_filter=deployments_filter,
+        recordings_filter=recordings_filter,
+        windows_filter=filter,
+        annotations_filter=annotations_filter,
+    )
+
+    # Execute the SQL query and return the window IDs.
     cursor.execute(
         f"""
-        SELECT *
-        FROM windows
+        {select_clause}
+        {from_clause}
         {where_clause}
         """,
         values,

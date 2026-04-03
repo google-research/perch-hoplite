@@ -565,12 +565,57 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
   def get_all_windows(
       self,
       include_embedding: bool = False,
+      deployments_filter: config_dict.ConfigDict | None = None,
+      recordings_filter: config_dict.ConfigDict | None = None,
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
+      annotations_filter: config_dict.ConfigDict | None = None,
   ) -> Sequence[datatypes.Window]:
     """Get all windows from the database."""
+    window_ids = set(self._windows.keys())
+    if filter:
+      window_ids &= select_matching_keys(self._windows, filter)
 
-    restrict_windows = select_matching_keys(self._windows, filter)
-    windows = [self._windows[key] for key in restrict_windows]
+    if deployments_filter:
+      depl_ids = select_matching_keys(self._deployments, deployments_filter)
+      rec_ids = {
+          r_id
+          for r_id, r in self._recordings.items()
+          if r.deployment_id in depl_ids
+      }
+      window_ids &= {
+          w_id
+          for w_id in window_ids
+          if self._windows[w_id].recording_id in rec_ids
+      }
+
+    if recordings_filter:
+      rec_ids = select_matching_keys(self._recordings, recordings_filter)
+      window_ids &= {
+          w_id
+          for w_id in window_ids
+          if self._windows[w_id].recording_id in rec_ids
+      }
+
+    if annotations_filter:
+      annot_ids = select_matching_keys(self._annotations, annotations_filter)
+      ann_rec_offsets = {
+          (
+              self._annotations[annotation_id].recording_id,
+              tuple(self._annotations[annotation_id].offsets),
+          )
+          for annotation_id in annot_ids
+      }
+      window_ids &= {
+          w_id
+          for w_id in window_ids
+          if (
+              self._windows[w_id].recording_id,
+              tuple(self._windows[w_id].offsets),
+          )
+          in ann_rec_offsets
+      }
+
+    windows = [self._windows[key] for key in window_ids]
 
     if include_embedding:
       return windows

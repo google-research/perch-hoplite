@@ -79,15 +79,17 @@ class HopliteTest(parameterized.TestCase):
       )
       self.assertEmpty(embs)
       # Source ids are approximately unique.
-      embs = db.match_window_ids(
+      embs = db.get_all_windows(
           deployments_filter=config_dict.create(
               eq=dict(project=deployment.project)
           ),
           recordings_filter=config_dict.create(
               eq=dict(filename=recording.filename)
           ),
+          include_embedding=True,
       )
       self.assertLen(embs, 1)
+      self.assertLen(embs[0].embedding, EMBEDDING_SIZE)
       # For an unknown source id, we should get no embeddings.
       embs = db.match_window_ids(
           deployments_filter=config_dict.create(

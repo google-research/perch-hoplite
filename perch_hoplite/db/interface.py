@@ -19,7 +19,7 @@ import abc
 import collections
 from collections.abc import Sequence
 import datetime as dt
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
 from ml_collections import config_dict
 import numpy as np
@@ -753,3 +753,32 @@ class HopliteDBInterface(abc.ABC):
       # (un-targeted) score.
       results = brutalism.rerank(query_embedding, results, self, raw_score_fn)
     return results
+
+  def insert_annotations(
+      self,
+      annotations: Sequence[datatypes.Annotation],
+      handle_duplicates: Literal[
+          "allow", "overwrite", "skip", "error"
+      ] = "skip",
+  ) -> None:
+    """Insert annotations into the database from search results.
+
+    Args:
+      annotations: A collection of annotations.
+      handle_duplicates: How to handle entries matching another database item's
+        (recording_id, offsets, label, label_type, provenance). If "allow",
+        duplicates are allowed. If "overwrite", the new annotation overwrites
+        the old one. If "skip", the old annotation is kept. If "error", an error
+        is raised if duplicates are found (this is the default).
+    """
+    # Save annotations in the database.
+    for ann in annotations:
+      self.insert_annotation(
+          recording_id=ann.recording_id,
+          offsets=ann.offsets,
+          label=ann.label,
+          label_type=ann.label_type,
+          provenance=ann.provenance,
+          handle_duplicates=handle_duplicates,
+      )
+    self.commit()

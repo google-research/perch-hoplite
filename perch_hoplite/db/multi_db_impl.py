@@ -207,6 +207,20 @@ class MultiDBWrapper(interface.HopliteDBInterface):
         recording_id=self._join_id(db_index, window.recording_id),
     )
 
+  def get_window_annotations(
+      self, window_id: int
+  ) -> Sequence[datatypes.Annotation]:
+    db_index, internal_win_id = self._split_id(window_id)
+    annotations = self._dbs[db_index].get_window_annotations(internal_win_id)
+    return [
+        datatypes.Annotation(
+            **ann.to_kwargs(skip=["id", "recording_id"]),
+            id=self._join_id(db_index, ann.id),
+            recording_id=self._join_id(db_index, ann.recording_id),
+        )
+        for ann in annotations
+    ]
+
   def get_embedding(self, window_id: int) -> np.ndarray:
     db_index, internal_win_id = self._split_id(window_id)
     return self._dbs[db_index].get_embedding(internal_win_id)

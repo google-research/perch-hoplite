@@ -19,7 +19,7 @@ import abc
 import collections
 from collections.abc import Sequence
 import datetime as dt
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
 from ml_collections import config_dict
 import numpy as np
@@ -412,6 +412,27 @@ class HopliteDBInterface(abc.ABC):
     Returns:
       A Window object containing the requested information.
     """
+
+  def get_window_annotations(
+      self, window_id: int
+  ) -> Sequence[datatypes.Annotation]:
+    """Get all annotations intersecting the given window.
+
+    Args:
+      window_id: The ID of the window to retrieve annotations for.
+
+    Returns:
+      A sequence of Annotation objects intersecting the given window.
+    """
+    window = self.get_window(window_id)
+    annotations = self.get_all_annotations(
+        filter=config_dict.create(eq=dict(recording_id=window.recording_id))
+    )
+    intersecting_annotations = []
+    for ann in annotations:
+      if ann.intersects(window):
+        intersecting_annotations.append(ann)
+    return intersecting_annotations
 
   @abc.abstractmethod
   def get_embedding(self, window_id: int) -> np.ndarray:

@@ -83,6 +83,22 @@ def approx_float_list(blob: bytes, target: bytes) -> bool:
   )
 
 
+def get_offset_start(blob: bytes) -> float:
+  """Extract start offset from blob."""
+  return np.frombuffer(
+      blob,
+      dtype=np.dtype('<f8'),  # little-endian np.float64
+  )[0]
+
+
+def get_offset_end(blob: bytes) -> float:
+  """Extract end offset from blob."""
+  return np.frombuffer(
+      blob,
+      dtype=np.dtype('<f8'),  # little-endian np.float64
+  )[1]
+
+
 sqlite3.register_adapter(list, adapt_float_list)
 sqlite3.register_converter('FLOAT_LIST', convert_float_list)
 
@@ -533,6 +549,18 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
         name='APPROX_FLOAT_LIST',
         narg=2,
         func=approx_float_list,
+        deterministic=True,
+    )
+    db.create_function(
+        name='GET_OFFSET_START',
+        narg=1,
+        func=get_offset_start,
+        deterministic=True,
+    )
+    db.create_function(
+        name='GET_OFFSET_END',
+        narg=1,
+        func=get_offset_end,
         deterministic=True,
     )
     db.set_trace_callback(
@@ -1134,6 +1162,35 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     if include_embedding:
       window.embedding = self.get_embedding(window_id)
     return window
+
+  def get_window_annotations(
+      self, window_id: int
+  ) -> Sequence[datatypes.Annotation]:
+    """Get all annotations intersecting the given window."""
+    # Note that we may improve performance through memoization, though it would
+    # need to be invalidated upon insertion/deletion of windows or annotations.
+    window = self.get_window(window_id)
+    w_start, w_end = window.offsets
+
+    cursor = self._get_cursor()
+    # Note that the inequalities should match the window.intersects() method.
+    cursor.execute(
+        """
+        SELECT *
+        FROM annotations
+        WHERE recording_id = ?
+        AND GET_OFFSET_START(offsets) < ?
+        AND GET_OFFSET_END(offsets) > ?
+        """,
+        (window.recording_id, w_end, w_start),
+    )
+    annotations = []
+    columns = [col[0] for col in cursor.description]
+    for result in cursor.fetchall():
+      annotation = datatypes.Annotation(**dict(zip(columns, result)))
+      annotation.label_type = datatypes.LabelType(annotation.label_type)
+      annotations.append(annotation)
+    return annotations
 
   def get_embedding(self, window_id: int) -> np.ndarray:
     """Get an embedding vector from the database."""

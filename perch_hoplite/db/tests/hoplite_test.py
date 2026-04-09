@@ -254,6 +254,96 @@ class HopliteTest(parameterized.TestCase):
       )
       self.assertEqual(annotation_id, dupe_annotation_id)
 
+    with self.subTest('get_window_annotations'):
+      window_id = db.insert_window(
+          recording_id=windows[0].recording_id,
+          offsets=[10.0, 15.0],
+          embedding=np.zeros(EMBEDDING_SIZE, dtype=np.float16),
+      )
+      # Annotation fully contained in window.
+      ann_id1 = db.insert_annotation(
+          recording_id=windows[0].recording_id,
+          offsets=[11.0, 14.0],
+          label='contained',
+          label_type=datatypes.LabelType.POSITIVE,
+          provenance='test',
+      )
+      # Annotation overlapping window start.
+      ann_id2 = db.insert_annotation(
+          recording_id=windows[0].recording_id,
+          offsets=[9.0, 11.0],
+          label='overlap_start',
+          label_type=datatypes.LabelType.NEGATIVE,
+          provenance='test',
+      )
+      # Annotation overlapping window end.
+      ann_id3 = db.insert_annotation(
+          recording_id=windows[0].recording_id,
+          offsets=[14.0, 16.0],
+          label='overlap_end',
+          label_type=datatypes.LabelType.POSITIVE,
+          provenance='test',
+      )
+      # Annotation covering window.
+      ann_id4 = db.insert_annotation(
+          recording_id=windows[0].recording_id,
+          offsets=[9.0, 16.0],
+          label='covering',
+          label_type=datatypes.LabelType.UNCERTAIN,
+          provenance='test',
+      )
+      # Boundary annotation.
+      db.insert_annotation(
+          recording_id=windows[0].recording_id,
+          offsets=[9.0, 10.0],
+          label='boundary_start',
+          label_type=datatypes.LabelType.UNCERTAIN,
+          provenance='test',
+      )
+      db.insert_annotation(
+          recording_id=windows[0].recording_id,
+          offsets=[15.0, 16.0],
+          label='boundary_end',
+          label_type=datatypes.LabelType.UNCERTAIN,
+          provenance='test',
+      )
+      # Annotation before window.
+      db.insert_annotation(
+          recording_id=windows[0].recording_id,
+          offsets=[8.0, 9.0],
+          label='before',
+          label_type=datatypes.LabelType.NEGATIVE,
+          provenance='test',
+      )
+      # Annotation after window.
+      db.insert_annotation(
+          recording_id=windows[0].recording_id,
+          offsets=[16.0, 17.0],
+          label='after',
+          label_type=datatypes.LabelType.POSITIVE,
+          provenance='test',
+      )
+      intersecting_annotations = db.get_window_annotations(window_id)
+      self.assertLen(intersecting_annotations, 4)
+      self.assertCountEqual(
+          [ann.id for ann in intersecting_annotations],
+          [ann_id1, ann_id2, ann_id3, ann_id4],
+      )
+
+      window_id_no_intersect = db.insert_window(
+          recording_id=windows[0].recording_id,
+          offsets=[0.0, 1.0],
+          embedding=np.zeros(EMBEDDING_SIZE, dtype=np.float16),
+      )
+      self.assertEmpty(db.get_window_annotations(window_id_no_intersect))
+
+      window_id_other_recording = db.insert_window(
+          recording_id=windows[1].recording_id,
+          offsets=[10.0, 15.0],
+          embedding=np.zeros(EMBEDDING_SIZE, dtype=np.float16),
+      )
+      self.assertEmpty(db.get_window_annotations(window_id_other_recording))
+
   @parameterized.named_parameters(*test_utils.DB_TYPE_NAMED_PAIRS)
   def test_brute_search_impl_agreement(self, target_db_type, source_db_type):
     rng = np.random.default_rng(42)

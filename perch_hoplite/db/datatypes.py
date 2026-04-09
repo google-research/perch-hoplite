@@ -18,7 +18,7 @@
 import dataclasses
 import datetime as dt
 import enum
-from typing import Any, Sequence
+from typing import Any, Sequence, Union
 
 from ml_collections import config_dict
 import numpy as np
@@ -217,6 +217,12 @@ class Window(DynamicInfo):
   offsets: list[float]
   embedding: np.ndarray | None
 
+  def intersects(self, other: Union["Window", "Annotation"]) -> bool:
+    """Check if this window intersects with another window."""
+    return self.recording_id == other.recording_id and max(
+        self.offsets[0], other.offsets[0]
+    ) <= min(self.offsets[1], other.offsets[1])
+
 
 class LabelType(int, enum.Enum):
   NEGATIVE = 0
@@ -234,6 +240,12 @@ class Annotation(DynamicInfo):
   label: str
   label_type: LabelType
   provenance: str
+
+  def intersects(self, other: Union[Window, "Annotation"]) -> bool:
+    """Check if this annotation intersects with another annotation."""
+    return self.recording_id == other.recording_id and max(
+        self.offsets[0], other.offsets[0]
+    ) < min(self.offsets[1], other.offsets[1])
 
 
 @dataclasses.dataclass

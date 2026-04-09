@@ -15,6 +15,7 @@
 
 """Tools for processing data for the Agile classifier."""
 
+import collections
 from collections.abc import Iterator, Sequence
 import dataclasses
 import itertools
@@ -87,13 +88,7 @@ class DataManager:
 
   def get_multihot_labels(self, idx: int) -> tuple[np.ndarray, np.ndarray]:
     """Create the multihot label for one example."""
-    window = self.db.get_window(idx)
-    annotations = self.db.get_all_annotations(
-        config_dict.create(
-            eq=dict(recording_id=window.recording_id),
-            approx=dict(offsets=window.offsets),
-        )
-    )
+    annotations = self.db.get_window_annotations(idx)
     target_labels = self.get_target_labels()
     lbl_idxes = {label: i for i, label in enumerate(target_labels)}
     pos = np.zeros(len(target_labels), dtype=np.float32)
@@ -110,6 +105,31 @@ class DataManager:
     denom = np.maximum(count, 1.0)
     multihot = pos / denom
     return multihot, mask
+
+  def _get_window_ids_for_label_type(
+      self, label: str, label_type: datatypes.LabelType
+  ) -> np.ndarray:
+    """Get window ids intersecting annotations with label and label_type."""
+    annotations = self.db.get_all_annotations(
+        filter=config_dict.create(eq={'label': label, 'label_type': label_type})
+    )
+    ann_by_recording = collections.defaultdict(list)
+    for ann in annotations:
+      ann_by_recording[ann.recording_id].append(ann)
+    recording_ids = list(ann_by_recording.keys())
+    if not recording_ids:
+      return np.array([], dtype=np.int64)
+
+    windows_for_recordings = self.db.get_all_windows(
+        recordings_filter=config_dict.create(isin={'id': recording_ids})
+    )
+    intersecting_window_ids = set()
+    for window in windows_for_recordings:
+      for ann in ann_by_recording.get(window.recording_id, []):
+        if window.intersects(ann):
+          intersecting_window_ids.add(window.id)
+          break
+    return np.array(list(intersecting_window_ids), dtype=np.int64)
 
   def labeled_example_iterator(
       self, ids: np.ndarray, repeat: bool = False
@@ -172,23 +192,13 @@ class AgileDataManager(DataManager):
       self, label: str
   ) -> tuple[np.ndarray, np.ndarray]:
     """Create a train/test split for a single label."""
-    pos_ids = self.db.match_window_ids(
-        annotations_filter=config_dict.create(
-            eq=dict(
-                label=label,
-                label_type=datatypes.LabelType.POSITIVE,
-            )
-        )
+    pos_ids = self._get_window_ids_for_label_type(
+        label, datatypes.LabelType.POSITIVE
     )
-    neg_ids = self.db.match_window_ids(
-        annotations_filter=config_dict.create(
-            eq=dict(
-                label=label,
-                label_type=datatypes.LabelType.NEGATIVE,
-            )
-        )
+    neg_ids = self._get_window_ids_for_label_type(
+        label, datatypes.LabelType.NEGATIVE
     )
-    if not pos_ids:
+    if not pos_ids.any():
       print('Warning: No positive examples for label: ', label)
       return np.array([], np.int64), np.array([], np.int64)
     all_ids = np.union1d(pos_ids, neg_ids)
@@ -284,13 +294,8 @@ class FullyAnnotatedDataManager(DataManager):
     pos_id_sets = {}
     eval_id_sets = {}
     for label in self.get_target_labels():
-      pos_id_sets[label] = self.db.match_window_ids(
-          annotations_filter=config_dict.create(
-              eq=dict(
-                  label=label,
-                  label_type=datatypes.LabelType.POSITIVE,
-              )
-          )
+      pos_id_sets[label] = self._get_window_ids_for_label_type(
+          label, datatypes.LabelType.POSITIVE
       )
       self.rng.shuffle(pos_id_sets[label])
       eval_id_sets[label] = pos_id_sets[label][: self.min_eval_examples]

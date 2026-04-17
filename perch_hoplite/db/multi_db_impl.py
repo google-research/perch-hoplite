@@ -80,6 +80,10 @@ class MultiDBWrapper(interface.HopliteDBInterface):
 
     return internal_id * len(self._dbs_list) + db_index
 
+  def get_dbs(self) -> Sequence[interface.HopliteDBInterface]:
+    """Returns the wrapped sub-databases."""
+    return self._dbs_list
+
   @classmethod
   def create(
       cls,
@@ -176,7 +180,27 @@ class MultiDBWrapper(interface.HopliteDBInterface):
       longitude: float | None = None,
       **kwargs: Any,
   ) -> int:
-    raise NotImplementedError()
+    db_indices = []
+    for db_index, db in enumerate(self._dbs_list):
+      if project in db.get_all_projects():
+        db_indices.append(db_index)
+
+    num_dbs = len(db_indices)
+    if num_dbs != 1:
+      raise NotImplementedError(
+          f"Project {project} must exist in exactly 1 wrapped database but is"
+          f" present in {num_dbs} databases"
+      )
+    db_index = db_indices[0]
+
+    internal_dep_id = self._dbs_list[db_index].insert_deployment(
+        name=name,
+        project=project,
+        latitude=latitude,
+        longitude=longitude,
+        **kwargs,
+    )
+    return self._join_id(db_index, internal_dep_id)
 
   def get_deployment(self, deployment_id: int) -> datatypes.Deployment:
     db_index, internal_id = self._split_id(deployment_id)

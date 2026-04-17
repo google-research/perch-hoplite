@@ -23,6 +23,7 @@ import numpy as np
 from perch_hoplite.db import brutalism
 from perch_hoplite.db import datatypes
 from perch_hoplite.db import iterators
+from perch_hoplite.db import multi_db_impl
 from perch_hoplite.db.tests import test_utils
 
 from absl.testing import absltest
@@ -59,7 +60,10 @@ class HopliteTest(parameterized.TestCase):
     self.assertIn(one_idx, idxes)
 
     # Check the metadata.
-    got_md = db.get_metadata('db_config')
+    if isinstance(db, multi_db_impl.MultiDBWrapper):
+      got_md = db.get_metadata('db0/db_config')
+    else:
+      got_md = db.get_metadata('db_config')
     self.assertEqual(got_md.embedding_dim, EMBEDDING_SIZE)
 
     with self.subTest('test_embedding_sources'):
@@ -105,6 +109,8 @@ class HopliteTest(parameterized.TestCase):
     rng = np.random.default_rng(42)
     db = test_utils.make_db(self.tempdir, db_type, 1000, rng, EMBEDDING_SIZE)
     one_emb = np.random.normal(size=(EMBEDDING_SIZE,), loc=0, scale=0.05)
+    if isinstance(db, multi_db_impl.MultiDBWrapper):
+      db._dbs_list[0].insert_deployment(name='q', project='q')
     one_dep_id = db.insert_deployment(name='q', project='q')
     one_rec_id = db.insert_recording(filename='x', deployment_id=one_dep_id)
     one_emb_id = db.insert_window(

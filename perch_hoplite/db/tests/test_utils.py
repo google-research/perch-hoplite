@@ -20,12 +20,25 @@ import numpy as np
 from perch_hoplite.db import datatypes
 from perch_hoplite.db import in_mem_impl
 from perch_hoplite.db import interface
+from perch_hoplite.db import multi_db_impl
 from perch_hoplite.db import sqlite_usearch_impl
 
 # DB types for testing.
-DB_TYPES = ('in_mem', 'sqlite_usearch')
-DB_TYPE_NAMED_PAIRS = (('in_mem-sqlite_usearch', 'in_mem', 'sqlite_usearch'),)
-PERSISTENT_DB_TYPES = ('sqlite_usearch',)
+DB_TYPES = (
+    'in_mem',
+    'sqlite_usearch',
+    'multi_db_in_mem',
+    'multi_db_sqlite_usearch',
+)
+DB_TYPE_NAMED_PAIRS = (
+    ('in_mem-sqlite_usearch', 'in_mem', 'sqlite_usearch'),
+    (
+        'multi_db_in_mem-multi_db_sqlite_usearch',
+        'multi_db_in_mem',
+        'multi_db_sqlite_usearch',
+    ),
+)
+PERSISTENT_DB_TYPES = ('sqlite_usearch', 'multi_db_sqlite_usearch')
 
 CLASS_LABELS = ('alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta')
 
@@ -46,6 +59,19 @@ def make_db(
     db = sqlite_usearch_impl.SQLiteUSearchDB.create(
         db_path=path, usearch_cfg=usearch_cfg
     )
+  elif db_type == 'multi_db_in_mem':
+    db0 = in_mem_impl.InMemoryGraphSearchDB.create(embedding_dim=embedding_dim)
+    db1 = in_mem_impl.InMemoryGraphSearchDB.create(embedding_dim=embedding_dim)
+    db = multi_db_impl.MultiDBWrapper.create(dbs={'db0': db0, 'db1': db1})
+  elif db_type == 'multi_db_sqlite_usearch':
+    usearch_cfg = sqlite_usearch_impl.get_default_usearch_config(embedding_dim)
+    db0 = sqlite_usearch_impl.SQLiteUSearchDB.create(
+        db_path=f'{path}_0', usearch_cfg=usearch_cfg
+    )
+    db1 = sqlite_usearch_impl.SQLiteUSearchDB.create(
+        db_path=f'{path}_1', usearch_cfg=usearch_cfg
+    )
+    db = multi_db_impl.MultiDBWrapper.create(dbs={'db0': db0, 'db1': db1})
   else:
     raise ValueError(f'Unknown db type: {db_type}')
   # Insert a few embeddings...
@@ -53,11 +79,17 @@ def make_db(
     insert_random_embeddings(db, embedding_dim, num_embeddings, rng)
   config = config_dict.ConfigDict()
   config.embedding_dim = embedding_dim
-  db.insert_metadata('db_config', config)
   model_config = config_dict.ConfigDict()
   model_config.embedding_dim = embedding_dim
   model_config.model_name = 'fake_model'
-  db.insert_metadata('model_config', model_config)
+  if isinstance(db, multi_db_impl.MultiDBWrapper):
+    db.insert_metadata('db0/db_config', config)
+    db.insert_metadata('db0/model_config', model_config)
+    db.insert_metadata('db1/db_config', config)
+    db.insert_metadata('db1/model_config', model_config)
+  else:
+    db.insert_metadata('db_config', config)
+    db.insert_metadata('model_config', model_config)
   db.commit()
   return db
 
@@ -73,10 +105,16 @@ def insert_random_embeddings(
   np_alpha = list('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
 
   projects = ('a', 'b', 'c')
-  deployment_ids = [
-      db.insert_deployment(name=f'deployment_{project}', project=project)
-      for project in projects
-  ]
+  deployment_ids = []
+  for project in projects:
+    if isinstance(db, multi_db_impl.MultiDBWrapper):
+      db.get_dbs()[0].insert_deployment(
+          name=f'deployment_{project}', project=project
+      )
+    deployment_id = db.insert_deployment(
+        name=f'deployment_{project}', project=project
+    )
+    deployment_ids.append(deployment_id)
 
   window_size_s = 5.0
   for _ in range(num_embeddings):
@@ -106,7 +144,10 @@ def clone_embeddings(
   # First, clone deployments and keep a map between source and target ids.
   deployment_id_mapping = {None: None}
   for deployment in source_db.get_all_deployments():
-    target_id = target_db.insert_deployment(**deployment.to_kwargs(skip=['id']))
+    kwargs = deployment.to_kwargs(skip=['id'])
+    if isinstance(target_db, multi_db_impl.MultiDBWrapper):
+      target_db.get_dbs()[0].insert_deployment(**kwargs)
+    target_id = target_db.insert_deployment(**kwargs)
     deployment_id_mapping[deployment.id] = target_id
 
   # Second, clone recordings and keep a map between source and target ids.

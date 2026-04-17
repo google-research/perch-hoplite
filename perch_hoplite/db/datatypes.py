@@ -186,6 +186,22 @@ class DynamicInfo:
         kwargs.pop(key, None)
     return kwargs
 
+  def replace(self, **kwargs) -> Any:
+    """Return a new instance of the same class with some fields replaced.
+
+    This method is similar to `dataclasses.replace`, but it also correctly
+    handles dynamic attributes stored in `_dynamic_info`.
+
+    Args:
+      **kwargs: The attributes to replace.
+
+    Returns:
+      A new instance of the same class with the specified attributes replaced.
+    """
+    new_kwargs = self.to_kwargs()
+    new_kwargs.update(kwargs)
+    return self.__class__(**new_kwargs)
+
 
 @dataclasses.dataclass(init=False, repr=False, eq=False)
 class Deployment(DynamicInfo):

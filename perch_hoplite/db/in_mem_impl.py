@@ -22,138 +22,11 @@ import dataclasses
 import datetime as dt
 import itertools
 from typing import Any, Literal
-
-from absl import logging
 from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.db import datatypes
+from perch_hoplite.db import filter_utils
 from perch_hoplite.db import interface
-
-
-def select_matching_keys(
-    kv: dict[int, Any],
-    filter_dict: config_dict.ConfigDict | None = None,
-) -> set[int]:
-  """Select the keys from a dictionary whose values match the given constraints.
-
-  Args:
-    kv: The dictionary to verify against the constraints.
-    filter_dict: An optional ConfigDict of constraints to verify.
-
-  Returns:
-    The keys of the matching items.
-  """
-
-  if not filter_dict:
-    return set(kv.keys())
-
-  supported_ops = {
-      'eq',
-      'neq',
-      'lt',
-      'lte',
-      'gt',
-      'gte',
-      'isin',
-      'notin',
-      'range',
-      'approx',
-  }
-  for op_name, op_filters in filter_dict.items():
-    if op_name not in supported_ops:
-      raise ValueError(
-          f'Unsupported operation: `{op_name}`. Supported filtering operations'
-          f' are: {supported_ops}.'
-      )
-    if not isinstance(op_filters, config_dict.ConfigDict):
-      raise ValueError(f'`{op_name}` value must be a ConfigDict.')
-
-  def _is_match(obj: Any) -> bool:
-    for op_name, op_filters in filter_dict.items():
-      for key, value in op_filters.items():
-        attr = getattr(obj, key, None)
-
-        if op_name == 'eq':
-          if key == 'offsets':
-            logging.warning(
-                "Do not apply `eq` to the `offsets` unless you know what you're"
-                ' doing. Apply `approx` instead to avoid floating point errors.'
-            )
-          if attr is None:
-            if value is not None:
-              return False
-          else:
-            if isinstance(attr, np.ndarray):
-              if (attr != value).any():
-                return False
-            else:
-              if attr != value:
-                return False
-        elif op_name == 'neq':
-          if attr is None:
-            if value is None:
-              return False
-          else:
-            if isinstance(attr, np.ndarray):
-              if (attr != value).all():
-                return False
-            else:
-              if attr == value:
-                return False
-        elif op_name == 'lt':
-          if attr is None or value is None:
-            return False
-          else:
-            if attr >= value:
-              return False
-        elif op_name == 'lte':
-          if attr is None or value is None:
-            return False
-          else:
-            if attr > value:
-              return False
-        elif op_name == 'gt':
-          if attr is None or value is None:
-            return False
-          else:
-            if attr <= value:
-              return False
-        elif op_name == 'gte':
-          if attr is None or value is None:
-            return False
-          else:
-            if attr < value:
-              return False
-        elif op_name == 'isin':
-          if not isinstance(value, list):
-            raise ValueError(f'`{op_name}` value must be a list.')
-          if attr not in value:
-            return False
-        elif op_name == 'notin':
-          if not isinstance(value, list):
-            raise ValueError(f'`{op_name}` value must be a list.')
-          if attr in value:
-            return False
-        elif op_name == 'range':
-          if not isinstance(value, list) or len(value) != 2:
-            raise ValueError(f'`{op_name}` value must be a list of 2 elements.')
-          if attr is None:
-            return False
-          if attr < value[0] or attr > value[1]:
-            return False
-        elif op_name == 'approx':
-          if attr is None or value is None:
-            return False
-          if key == 'offsets':
-            if not np.allclose(attr, value, rtol=0.0, atol=1e-6):
-              return False
-          else:
-            if abs(attr - value) >= 1e-6:
-              return False
-
-    return True
-
-  return {key for key, value in kv.items() if _is_match(value)}
 
 
 @dataclasses.dataclass
@@ -471,7 +344,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
 
     # Filter by deployment constraints.
     if deployments_filter:
-      restrict_deployments = select_matching_keys(
+      restrict_deployments = filter_utils.select_matching_keys(
           self._deployments,
           deployments_filter,
       )
@@ -481,7 +354,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
     # Filter by recording constraints.
     if recordings_filter or restrict_deployments is not None:
       if recordings_filter:
-        restrict_recordings = select_matching_keys(
+        restrict_recordings = filter_utils.select_matching_keys(
             self._recordings,
             recordings_filter,
         )
@@ -499,7 +372,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
     # Filter by window constraints.
     if windows_filter or restrict_recordings is not None:
       if windows_filter:
-        restrict_windows = select_matching_keys(
+        restrict_windows = filter_utils.select_matching_keys(
             self._windows,
             windows_filter,
         )
@@ -516,7 +389,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
 
     # Filter by annotation constraints.
     if annotations_filter:
-      restrict_annotations = select_matching_keys(
+      restrict_annotations = filter_utils.select_matching_keys(
           self._annotations,
           annotations_filter,
       )
@@ -551,7 +424,9 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
   ) -> Sequence[datatypes.Deployment]:
     """Get all deployments from the database."""
-    restrict_deployments = select_matching_keys(self._deployments, filter)
+    restrict_deployments = filter_utils.select_matching_keys(
+        self._deployments, filter
+    )
     return [self._deployments[key] for key in restrict_deployments]
 
   def get_all_recordings(
@@ -559,7 +434,9 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
   ) -> Sequence[datatypes.Recording]:
     """Get all recordings from the database."""
-    restrict_recordings = select_matching_keys(self._recordings, filter)
+    restrict_recordings = filter_utils.select_matching_keys(
+        self._recordings, filter
+    )
     return [self._recordings[key] for key in restrict_recordings]
 
   def get_all_windows(
@@ -573,10 +450,12 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
     """Get all windows from the database."""
     window_ids = set(self._windows.keys())
     if filter:
-      window_ids &= select_matching_keys(self._windows, filter)
+      window_ids &= filter_utils.select_matching_keys(self._windows, filter)
 
     if deployments_filter:
-      depl_ids = select_matching_keys(self._deployments, deployments_filter)
+      depl_ids = filter_utils.select_matching_keys(
+          self._deployments, deployments_filter
+      )
       rec_ids = {
           r_id
           for r_id, r in self._recordings.items()
@@ -589,7 +468,9 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
       }
 
     if recordings_filter:
-      rec_ids = select_matching_keys(self._recordings, recordings_filter)
+      rec_ids = filter_utils.select_matching_keys(
+          self._recordings, recordings_filter
+      )
       window_ids &= {
           w_id
           for w_id in window_ids
@@ -597,7 +478,9 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
       }
 
     if annotations_filter:
-      annot_ids = select_matching_keys(self._annotations, annotations_filter)
+      annot_ids = filter_utils.select_matching_keys(
+          self._annotations, annotations_filter
+      )
       ann_rec_offsets = {
           (
               self._annotations[annotation_id].recording_id,
@@ -630,7 +513,9 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
       filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
   ) -> Sequence[datatypes.Annotation]:
     """Get all annotations from the database."""
-    restrict_annotations = select_matching_keys(self._annotations, filter)
+    restrict_annotations = filter_utils.select_matching_keys(
+        self._annotations, filter
+    )
     return [self._annotations[key] for key in restrict_annotations]
 
   def get_all_labels(

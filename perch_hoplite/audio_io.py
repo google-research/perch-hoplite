@@ -152,10 +152,27 @@ def load_audio_window(
   # Try librosa.
   try:
     duration = window_size_s if window_size_s > 0 else None
-    audio, _ = librosa.load(
-        filepath, sr=sample_rate, offset=offset_s, duration=duration
-    )
-    return audio.astype(dtype)
+    # If the file is on GCS, download to a temp file for librosa.
+    filepath_to_load = filepath
+    temp_file = None
+    if filepath.startswith('gs://'):
+      extension = epath.Path(filepath).suffix.lower()
+      temp_file = tempfile.NamedTemporaryFile(
+          mode='w+b', suffix=extension, delete=False
+      )
+      with epath.Path(filepath).open('rb') as source_file:
+        temp_file.write(source_file.read())
+      temp_file.flush()
+      filepath_to_load = temp_file.name
+
+    try:
+      audio, _ = librosa.load(
+          filepath_to_load, sr=sample_rate, offset=offset_s, duration=duration
+      )
+      return audio.astype(dtype)
+    finally:
+      if temp_file:
+        os.unlink(temp_file.name)
   except Exception as exc:  # pylint: disable=broad-exception-caught
     logging.error('Failed to load audio with librosa (%s) : %s.', filepath, exc)
 

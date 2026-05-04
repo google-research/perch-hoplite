@@ -280,11 +280,11 @@ class MultiDBWrapper(interface.HopliteDBInterface):
     )
 
   def get_window_annotations(
-      self, window_id: int
+      self, window_id: int, label: str | None = None
   ) -> Sequence[datatypes.Annotation]:
     db_index, internal_win_id = self._split_id(window_id)
     annotations = self._dbs_list[db_index].get_window_annotations(
-        internal_win_id
+        internal_win_id, label=label
     )
     return [
         ann.replace(

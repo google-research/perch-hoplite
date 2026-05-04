@@ -414,25 +414,61 @@ class HopliteDBInterface(abc.ABC):
     """
 
   def get_window_annotations(
-      self, window_id: int
+      self, window_id: int, label: str | None = None
   ) -> Sequence[datatypes.Annotation]:
     """Get all annotations intersecting the given window.
 
     Args:
       window_id: The ID of the window to retrieve annotations for.
+      label: If provided, only retrieve annotations with this label.
 
     Returns:
       A sequence of Annotation objects intersecting the given window.
     """
     window = self.get_window(window_id)
-    annotations = self.get_all_annotations(
-        filter=config_dict.create(eq=dict(recording_id=window.recording_id))
-    )
+    if label is None:
+      annotations = self.get_all_annotations(
+          filter=config_dict.create(eq=dict(recording_id=window.recording_id))
+      )
+    else:
+      annotations = self.get_all_annotations(
+          filter=config_dict.create(
+              eq=dict(recording_id=window.recording_id, label=label)
+          )
+      )
     intersecting_annotations = []
     for ann in annotations:
       if ann.intersects(window):
         intersecting_annotations.append(ann)
     return intersecting_annotations
+
+  def get_labeled_windows(
+      self,
+      label: str,
+      label_type: datatypes.LabelType | None = None,
+      include_embedding: bool = False,
+  ) -> Sequence[datatypes.Window]:
+    """Get all windows with a particular annotation label and optional label_type.
+
+    Args:
+      label: The label to filter by.
+      label_type: If provided, only retrieve windows with this label type.
+      include_embedding: Whether to include the embedding vector in the returned
+        Window objects.
+
+    Returns:
+      A sequence of Window objects matching the given label and label_type.
+    """
+    if label_type is None:
+      annotations_filter = config_dict.create(eq=dict(label=label))
+    else:
+      annotations_filter = config_dict.create(
+          eq=dict(label=label, label_type=label_type)
+      )
+    return self.get_all_windows(
+        include_embedding=include_embedding,
+        annotations_filter=annotations_filter,
+    )
 
   @abc.abstractmethod
   def get_embedding(self, window_id: int) -> np.ndarray:

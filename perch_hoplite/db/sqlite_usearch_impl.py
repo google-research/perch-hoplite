@@ -331,7 +331,10 @@ def _get_window_query_components(
   if 'annotations' in query_tables:
     from_clause += (
         ' JOIN annotations ON windows.recording_id = annotations.recording_id'
-        ' AND APPROX_FLOAT_LIST(windows.offsets, annotations.offsets) = TRUE'
+        ' AND GET_OFFSET_START(annotations.offsets) <'
+        ' GET_OFFSET_END(windows.offsets)'
+        ' AND GET_OFFSET_END(annotations.offsets) >'
+        ' GET_OFFSET_START(windows.offsets)'
     )
   if 'recordings' in query_tables:
     from_clause += ' JOIN recordings ON windows.recording_id = recordings.id'
@@ -857,9 +860,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     deployment_id = int(deployment_id)
 
     remove_window_ids = self.match_window_ids(
-        deployments_filter=config_dict.create(
-            eq=dict(deployment_id=deployment_id)
-        )
+        deployments_filter=config_dict.create(eq=dict(id=deployment_id))
     )
     if remove_window_ids:
       if not self._ui_loaded:
@@ -956,7 +957,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     recording_id = int(recording_id)
 
     remove_window_ids = self.match_window_ids(
-        recordings_filter=config_dict.create(eq=dict(recording_id=recording_id))
+        recordings_filter=config_dict.create(eq=dict(id=recording_id))
     )
     if remove_window_ids:
       if not self._ui_loaded:
@@ -1164,7 +1165,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     return window
 
   def get_window_annotations(
-      self, window_id: int
+      self, window_id: int, label: str | None = None
   ) -> Sequence[datatypes.Annotation]:
     """Get all annotations intersecting the given window."""
     # Note that we may improve performance through memoization, though it would
@@ -1174,16 +1175,18 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
     cursor = self._get_cursor()
     # Note that the inequalities should match the window.intersects() method.
-    cursor.execute(
-        """
+    query = """
         SELECT *
         FROM annotations
         WHERE recording_id = ?
         AND GET_OFFSET_START(offsets) < ?
         AND GET_OFFSET_END(offsets) > ?
-        """,
-        (window.recording_id, w_end, w_start),
-    )
+        """
+    params = [window.recording_id, w_end, w_start]
+    if label is not None:
+      query += ' AND label = ?'
+      params.append(label)
+    cursor.execute(query, params)
     annotations = []
     columns = [col[0] for col in cursor.description]
     for result in cursor.fetchall():

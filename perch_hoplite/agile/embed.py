@@ -17,9 +17,9 @@
 
 from concurrent import futures
 import dataclasses
-import functools
 import itertools
 import threading
+from typing import Literal
 
 from absl import logging
 import audioread
@@ -33,6 +33,7 @@ from perch_hoplite.db import interface as hoplite_interface
 from perch_hoplite.zoo import model_configs
 from perch_hoplite.zoo import zoo_interface
 import soundfile
+import tqdm
 
 
 @dataclasses.dataclass
@@ -148,6 +149,8 @@ class EmbedWorker:
         g.dataset_name: metadata.AgileMetadata.from_directory(g.base_path)
         for g in self.audio_sources.audio_globs
     }
+    self._deployment_map = {}
+    self._recording_map = {}
 
   def _log_error(self, source_id, exception, counter_name):
     logging.warning(
@@ -208,7 +211,6 @@ class EmbedWorker:
     self._update_audio_sources()
     self.db.commit()
 
-  @functools.cache  # pylint: disable=method-cache-max-size-none
   def _get_or_insert_deployment_id(
       self,
       deployment_name: str,
@@ -216,24 +218,30 @@ class EmbedWorker:
       error_on_insert: bool = False,
   ) -> int:
     """Get the deployment ID for the given deployment name and project name."""
+    if (deployment_name, project_name) in self._deployment_map:
+      return self._deployment_map[(deployment_name, project_name)]
+
     deployments = self.db.get_all_deployments(
         config_dict.create(eq=dict(name=deployment_name, project=project_name))
     )
     if deployments:
-      return deployments[0].id
+      deployment_id = deployments[0].id
+      self._deployment_map[(deployment_name, project_name)] = deployment_id
+      return deployment_id
     if error_on_insert:
       raise ValueError(
           f'Deployment {deployment_name} not found in project {project_name}.'
       )
     md = self.metadata[project_name].get_deployment_metadata(deployment_name)
     md.pop('deployment', None)
-    return self.db.insert_deployment(
+    deployment_id = self.db.insert_deployment(
         name=deployment_name,
         project=project_name,
         **md,
     )
+    self._deployment_map[(deployment_name, project_name)] = deployment_id
+    return deployment_id
 
-  @functools.cache  # pylint: disable=method-cache-max-size-none
   def _get_or_insert_recording_id(
       self,
       filename: str,
@@ -242,58 +250,146 @@ class EmbedWorker:
       error_on_insert: bool = False,
   ) -> tuple[int, bool]:
     """Get the recording ID, and indicate whether it was newly inserted."""
+    if (deployment_id, filename) in self._recording_map:
+      return self._recording_map[(deployment_id, filename)], False
+
     recordings = self.db.get_all_recordings(
         config_dict.create(
             eq=dict(filename=filename, deployment_id=deployment_id)
         )
     )
     if recordings:
-      return recordings[0].id, False
+      recording_id = recordings[0].id
+      self._recording_map[(deployment_id, filename)] = recording_id
+      return recording_id, False
     if error_on_insert:
       raise ValueError(
           f'Recording {filename} not found in deployment {deployment_id}.'
       )
     md = self.metadata[dataset_name].get_recording_metadata(filename)
     md.pop('recording', None)
-    return (
-        self.db.insert_recording(
-            filename=filename,
-            deployment_id=deployment_id,
-            **md,
-        ),
-        True,
+    recording_id = self.db.insert_recording(
+        filename=filename,
+        deployment_id=deployment_id,
+        **md,
     )
+    self._recording_map[(deployment_id, filename)] = recording_id
+    return recording_id, True
 
-  def add_deployments(self, target_dataset_name: str | None = None):
+  def add_deployments(
+      self,
+      target_dataset_name: str | None = None,
+      handle_duplicates: Literal[
+          'allow', 'overwrite', 'skip', 'error'
+      ] = 'error',
+  ):
     """Add deployments to db and create a source ID to deployment ID mapping."""
-    # Create missing deployments in the database.
+    if handle_duplicates != 'allow':
+      existing = self.db.get_all_deployments()
+      if not existing:
+        handle_duplicates = 'allow'
+      else:
+        for d in existing:
+          self._deployment_map[(d.name, d.project)] = d.id
+
+    # Gather unique deployments from sources.
+    unique_deployments = set()
     for source in self.audio_sources.iterate_all_sources(target_dataset_name):
-      deployment_name = source.deployment_name_from_file_id()
-      self._get_or_insert_deployment_id(
-          deployment_name=deployment_name,
-          project_name=source.dataset_name,
+      unique_deployments.add(
+          (source.deployment_name_from_file_id(), source.dataset_name)
       )
+
+    # Create missing deployments in the database.
+    for deployment_name, project_name in unique_deployments:
+      if (
+          handle_duplicates == 'allow'
+          or (deployment_name, project_name) not in self._deployment_map
+      ):
+        self._get_or_insert_deployment_id(
+            deployment_name=deployment_name,
+            project_name=project_name,
+        )
+      elif handle_duplicates == 'error':
+        raise ValueError(
+            f'Deployment {deployment_name} in project {project_name} '
+            'already exists.'
+        )
+      elif handle_duplicates == 'overwrite':
+        self.db.remove_deployment(
+            self._deployment_map[(deployment_name, project_name)]
+        )
+        del self._deployment_map[(deployment_name, project_name)]
+        self._get_or_insert_deployment_id(
+            deployment_name=deployment_name,
+            project_name=project_name,
+        )
+      elif handle_duplicates == 'skip':
+        continue
+
     self.db.commit()
 
-  def add_recordings(self, target_dataset_name: str | None = None) -> set[int]:
+  def add_recordings(
+      self,
+      target_dataset_name: str | None = None,
+      handle_duplicates: Literal[
+          'allow', 'overwrite', 'skip', 'error'
+      ] = 'error',
+  ) -> set[int]:
     """Add recordings to db and create a source ID to recording ID mapping."""
+    if handle_duplicates != 'allow':
+      existing = self.db.get_all_recordings()
+      if not existing:
+        handle_duplicates = 'allow'
+      else:
+        for r in existing:
+          self._recording_map[(r.deployment_id, r.filename)] = r.id
+
     new_recordings = set([])
     for source in self.audio_sources.iterate_all_sources(target_dataset_name):
       deployment_id = self._get_or_insert_deployment_id(
           deployment_name=source.deployment_name_from_file_id(),
           project_name=source.dataset_name,
+          error_on_insert=True,
       )
-      recording_id, is_new = self._get_or_insert_recording_id(
-          source.file_id,
-          deployment_id,
-          source.dataset_name,
-      )
-      if is_new:
+      if (
+          handle_duplicates == 'allow'
+          or (deployment_id, source.file_id) not in self._recording_map
+      ):
+        recording_id, is_new = self._get_or_insert_recording_id(
+            source.file_id,
+            deployment_id,
+            source.dataset_name,
+        )
+        if is_new:
+          new_recordings.add(recording_id)
+      elif handle_duplicates == 'skip':
+        continue
+      elif handle_duplicates == 'error':
+        raise ValueError(
+            f'Recording {source.file_id} already exists in deployment '
+            f'{deployment_id}.'
+        )
+      elif handle_duplicates == 'overwrite':
+        self.db.remove_recording(
+            self._recording_map[(deployment_id, source.file_id)]
+        )
+        del self._recording_map[(deployment_id, source.file_id)]
+        recording_id, _ = self._get_or_insert_recording_id(
+            source.file_id,
+            deployment_id,
+            source.dataset_name,
+        )
         new_recordings.add(recording_id)
     self.db.commit()
     return new_recordings
 
-  def add_annotations(self, target_dataset_name: str | None = None):
+  def add_annotations(
+      self,
+      target_dataset_name: str | None = None,
+      handle_duplicates: Literal[
+          'allow', 'overwrite', 'skip', 'error'
+      ] = 'error',
+  ):
     """Add annotations from metadata to db."""
     dataset_names = self.metadata.keys()
     if target_dataset_name is not None:
@@ -305,7 +401,9 @@ class EmbedWorker:
       agile_md = self.metadata[dataset_name]
       if not agile_md.annotations:
         continue
-      for file_id, annotation_list in agile_md.annotations.items():
+      for file_id, annotation_list in tqdm.tqdm(
+          agile_md.annotations.items(), desc='Adding annotations'
+      ):
         depl_name = file_id.split('/')[0]
         if not depl_name:
           logging.warning(
@@ -324,14 +422,16 @@ class EmbedWorker:
               annotation.label,
               annotation.label_type,
               provenance=annotation.provenance,
-              handle_duplicates='skip',
+              handle_duplicates=handle_duplicates,
           )
     self.db.commit()
 
   def embed_dataset(
       self,
       batch_size=32,
-      handle_duplicates: str = 'error',
+      handle_duplicates: Literal[
+          'allow', 'overwrite', 'skip', 'error'
+      ] = 'error',
       target_dataset_name: str | None = None,
       new_recordings: set[int] | None = None,
   ):
@@ -472,11 +572,11 @@ class EmbedWorker:
 
     # Add deployments and recordings to the database.
     print('\nAdding deployments...')
-    self.add_deployments(target_dataset_name)
+    self.add_deployments(target_dataset_name, handle_duplicates)
     print('\nAdding recordings...')
-    new_recordings = self.add_recordings(target_dataset_name)
+    new_recordings = self.add_recordings(target_dataset_name, handle_duplicates)
     print('\nAdding annotations...')
-    self.add_annotations()
+    self.add_annotations(handle_duplicates=handle_duplicates)
     print('\nEmbedding audio...')
     self.embed_dataset(
         batch_size=batch_size,

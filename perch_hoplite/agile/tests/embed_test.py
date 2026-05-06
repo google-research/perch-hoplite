@@ -79,7 +79,7 @@ class EmbedTest(parameterized.TestCase):
           'neg/baz.wav,MicB\n'
       )
 
-    aduio_sources = source_info.AudioSources(
+    audio_sources = source_info.AudioSources(
         audio_globs=(
             source_info.AudioSourceConfig(
                 dataset_name='test',
@@ -119,7 +119,7 @@ class EmbedTest(parameterized.TestCase):
         raise ValueError(f'Unknown db_key: {db_key}')
 
       embed_worker = embed.EmbedWorker(
-          audio_sources=aduio_sources,
+          audio_sources=audio_sources,
           model_config=model_config,
           db=db,
       )
@@ -173,7 +173,7 @@ class EmbedTest(parameterized.TestCase):
       model_config.logits_idxes = (1, 2, 3, 5, 8, 13)
 
       embed_worker = embed.EmbedWorker(
-          audio_sources=aduio_sources,
+          audio_sources=audio_sources,
           model_config=model_config,
           db=db,
       )
@@ -185,6 +185,87 @@ class EmbedTest(parameterized.TestCase):
       # The placeholder model defaults to 128-dim'l outputs, but we only want
       # the channels specified in the logits_idxes.
       self.assertEqual(embs.shape[-1], 6)
+
+
+class DuplicateHandlingTest(absltest.TestCase):
+
+  def setUp(self):
+    super().setUp()
+    self.tempdir = tempfile.mkdtemp()
+    self.db_path = os.path.join(self.tempdir, 'test_db')
+
+    classes = ['pos']
+    filenames = ['foo']
+    test_utils.make_wav_files(self.tempdir, classes, filenames, file_len_s=2.0)
+
+    self.audio_sources = source_info.AudioSources(
+        audio_globs=(
+            source_info.AudioSourceConfig(
+                dataset_name='test',
+                base_path=self.tempdir,
+                file_glob='*/*.wav',
+                min_audio_len_s=0.0,
+                target_sample_rate_hz=16000,
+            ),
+        )
+    )
+
+    placeholder_model_config = config_dict.ConfigDict()
+    placeholder_model_config.embedding_size = 32
+    placeholder_model_config.sample_rate = 16000
+    self.model_config = embed.ModelConfig(
+        model_key='placeholder_model',
+        embedding_dim=32,
+        model_config=placeholder_model_config,
+    )
+
+  def tearDown(self):
+    super().tearDown()
+    shutil.rmtree(self.tempdir)
+
+  def test_duplicate_error(self):
+    db = db_loader.create_new_usearch_db(db_path=self.db_path, embedding_dim=32)
+    worker = embed.EmbedWorker(self.audio_sources, self.model_config, db)
+
+    # First pass
+    worker.process_all(handle_duplicates='allow')
+    self.assertEqual(db.count_embeddings(), 2)  # 2s / 1s hop = 2
+
+    # Second pass with error
+    with self.assertRaisesRegex(ValueError, 'already exists'):
+      worker.process_all(handle_duplicates='error')
+
+  def test_duplicate_skip(self):
+    db = db_loader.create_new_usearch_db(db_path=self.db_path, embedding_dim=32)
+    worker = embed.EmbedWorker(self.audio_sources, self.model_config, db)
+
+    worker.process_all(handle_duplicates='allow')
+    self.assertEqual(db.count_embeddings(), 2)
+
+    # Second pass with skip - should not add anything extra
+    worker.process_all(handle_duplicates='skip')
+    self.assertEqual(db.count_embeddings(), 2)
+
+  def test_duplicate_overwrite(self):
+    db = db_loader.create_new_usearch_db(db_path=self.db_path, embedding_dim=32)
+    worker = embed.EmbedWorker(self.audio_sources, self.model_config, db)
+
+    worker.process_all(handle_duplicates='allow')
+    self.assertEqual(db.count_embeddings(), 2)
+
+    # Second pass with overwrite - should remove and re-add.
+    # Since it removes properly and then adds, count should still be 2.
+    worker.process_all(handle_duplicates='overwrite')
+    self.assertEqual(db.count_embeddings(), 2)
+
+  def test_duplicate_allow(self):
+    db = db_loader.create_new_usearch_db(db_path=self.db_path, embedding_dim=32)
+    worker = embed.EmbedWorker(self.audio_sources, self.model_config, db)
+
+    worker.process_all(handle_duplicates='allow')
+    self.assertEqual(db.count_embeddings(), 2)
+    worker.process_all(handle_duplicates='allow')
+    self.assertEqual(db.count_embeddings(), 4)
 
 
 if __name__ == '__main__':

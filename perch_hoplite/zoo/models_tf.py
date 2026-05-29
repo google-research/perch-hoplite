@@ -369,8 +369,8 @@ class BirdNet(zoo_interface.EmbeddingModel):
           input_details['index'], np.float32(audio)[np.newaxis, :]
       )
       self.model.invoke()
-      logits.append(self.model.get_tensor(output_details['index']))
-      embeddings.append(self.model.get_tensor(embedding_idx))
+      logits.append(self.model.get_tensor(output_details['index']).copy())
+      embeddings.append(self.model.get_tensor(embedding_idx).copy())
     # Create [Batch, 1, Features]
     embeddings = np.array(embeddings)
     logits = np.array(logits)

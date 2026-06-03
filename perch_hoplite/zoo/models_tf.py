@@ -334,13 +334,38 @@ class BirdNet(zoo_interface.EmbeddingModel):
       tflite = False
       model = tf.saved_model.load(config.model_path)
     db = namespace_db.load_db()
-    class_list = db.class_lists[config.class_list_name]
-    return cls(
-        model=model,
-        tflite=tflite,
-        class_list=class_list,
-        **config,
-    )
+
+    if config.class_list_name == 'birdnet_v2_1':
+      class_list = db.class_lists[config.class_list_name]
+      return cls(
+          model=model,
+          tflite=tflite,
+          class_list=class_list,
+          **config,
+      )
+    elif config.class_list_name == 'birdnet_v2_4':
+      # This assumes that the  v2.4 labels are stored in a text file in the same
+      # directory as the model (e.g. in GCP) but don't have the filename
+      # "labels.csv".
+      if config.model_path.endswith('.tflite'):
+        label_csv_path = (
+            epath.Path(config.model_path).parent
+            / 'BirdNET_GLOBAL_6K_V2.4_Labels.txt'
+        )
+      else:
+        label_csv_path = (
+            epath.Path(config.model_path) / 'BirdNET_GLOBAL_6K_V2.4_Labels.txt '
+        )
+      with label_csv_path.open('r') as f:
+        class_list = namespace.ClassList.from_csv(f)
+      return cls(
+          model=model,
+          tflite=tflite,
+          class_list=class_list,
+          **config,
+      )
+    else:
+      raise ValueError(f'Unsupported class list name: {config.class_list_name}')
 
   def embed_saved_model(
       self, audio_array: np.ndarray

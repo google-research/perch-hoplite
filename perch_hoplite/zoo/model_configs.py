@@ -30,6 +30,7 @@ class ModelConfigName(enum.Enum):
   BIRDNET_V2_1 = 'birdnet_V2.1'
   BIRDNET_V2_2 = 'birdnet_V2.2'
   BIRDNET_V2_3 = 'birdnet_V2.3'
+  BIRDNET_V2_4 = 'birdnet_V2.4'
   PERCH_V2 = 'perch_v2'
   PERCH_V2_GPU = 'perch_v2_gpu'
   PERCH_V2_CPU = 'perch_v2_cpu'
@@ -218,9 +219,16 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
   elif preset_name.value.startswith('birdnet'):
     model_key = 'birdnet'
     birdnet_version = preset_name.value.split('_')[-1]
-    if birdnet_version not in ('V2.1', 'V2.2', 'V2.3'):
+    if birdnet_version not in ('V2.1', 'V2.2', 'V2.3', 'V2.4'):
       raise ValueError(f'Birdnet version not supported: {birdnet_version}')
+    elif birdnet_version in ('V2.4'):
+      model_config.class_list_name = 'birdnet_v2_4'
+    else:
+      # Note: The v2_1 class list is appropriate for Birdnet 2.1, 2.2, and 2.3.
+      model_config.class_list_name = 'birdnet_v2_1'
+
     base_path = 'gs://chirp-public-bucket/models/birdnet'
+
     if birdnet_version == 'V2.1':
       embedding_dim = 420
       model_path = 'V2.1/BirdNET_GLOBAL_2K_V2.1_Model_FP16.tflite'
@@ -230,6 +238,10 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     elif birdnet_version == 'V2.3':
       embedding_dim = 1024
       model_path = 'V2.3/BirdNET_GLOBAL_3K_V2.3_Model_FP16.tflite'
+    elif birdnet_version == 'V2.4':
+      embedding_dim = 1024
+      model_path = 'V2.4/BirdNET_GLOBAL_6K_V2.4_Model_FP16.tflite'
+      model_config.class_list_name = 'birdnet_v2_4'
     else:
       # TODO(tomdenton): Support V2.4.
       raise ValueError(f'Birdnet version not supported: {birdnet_version}')
@@ -237,9 +249,8 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_config.hop_size_s = 3.0
     model_config.sample_rate = 48000
     model_config.model_path = f'{base_path}/{model_path}'
-    # Note: The v2_1 class list is appropriate for Birdnet 2.1, 2.2, and 2.3.
-    model_config.class_list_name = 'birdnet_v2_1'
     model_config.num_tflite_threads = 4
+
   elif preset_name == ModelConfigName.YAMNET:
     model_key = 'tfhub_model'
     embedding_dim = 1024

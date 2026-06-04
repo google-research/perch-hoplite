@@ -18,14 +18,13 @@
 import os
 import shutil
 
-from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.agile import classifier
 from perch_hoplite.db import datatypes
 from perch_hoplite.db import in_mem_impl
-from perch_hoplite.db import sqlite_usearch_impl
-from perch_hoplite.db.tests import test_utils as db_test_utils
+from perch_hoplite.db import interface
 from scipy.io import wavfile
+from sklearn import metrics
 
 
 def make_wav_files(
@@ -105,17 +104,7 @@ def call_density_simulation(
   if os.path.exists('/tmp/test_db'):
     shutil.rmtree('/tmp/test_db')
   rng = np.random.default_rng(rng_seed)
-  db = sqlite_usearch_impl.SQLiteUSearchDB.create(
-      db_path='/tmp/test_db',
-      usearch_cfg=config_dict.create(
-          dtype='float16',
-          embedding_dim=embedding_dim,
-          metric_name='IP',
-          expansion_add=256,
-          expansion_search=128,
-      ),
-  )
-  # db = in_mem_impl.InMemoryGraphSearchDB.create(embedding_dim=embedding_dim)
+  db = in_mem_impl.InMemoryGraphSearchDB.create(embedding_dim=embedding_dim)
   data, labels, ideal_classifier = make_mix_embeddings(
       rng, embedding_dim, mu_diff, pos_sigma, neg_sigma, pos_pi, num_windows
   )
@@ -137,3 +126,19 @@ def call_density_simulation(
       gt_labels_dict[idx] = datatypes.LabelType.NEGATIVE
 
   return db, ideal_classifier, gt_labels_dict
+
+
+def compute_roc_auc(
+    db: interface.HopliteDBInterface,
+    linear_classifier: classifier.LinearClassifier,
+    gt_labels: dict[int, datatypes.LabelType],
+) -> float:
+  """Computes the ROC AUC for a given classifier and ground truth labels."""
+  scores = []
+  labels = []
+  for window_id, label in gt_labels.items():
+    scores.append(linear_classifier(db.get_window(window_id).embedding)[0][0])
+    labels.append(label.value)
+  scores = np.array(scores)
+  labels = np.array(labels)
+  return metrics.roc_auc_score(labels, scores)

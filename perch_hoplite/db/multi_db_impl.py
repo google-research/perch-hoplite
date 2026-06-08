@@ -17,6 +17,7 @@
 
 import collections
 from collections.abc import Mapping, Sequence
+import concurrent.futures
 import datetime as dt
 from typing import Any, Literal
 
@@ -349,17 +350,56 @@ class MultiDBWrapper(interface.HopliteDBInterface):
       annotations_filter: config_dict.ConfigDict | None = None,
       limit: int | None = None,
   ) -> Sequence[int]:
-    windows = self.get_all_windows(
-        include_embedding=False,
-        deployments_filter=deployments_filter,
-        recordings_filter=recordings_filter,
-        filter=windows_filter,
-        annotations_filter=annotations_filter,
+    _, deployments_post_filter = filter_utils.split_filter(
+        deployments_filter, ["id"]
     )
-    ids = [window.id for window in windows]
+    _, recordings_post_filter = filter_utils.split_filter(
+        recordings_filter, ["id", "deployment_id"]
+    )
+    _, windows_post_filter = filter_utils.split_filter(
+        windows_filter, ["id", "recording_id"]
+    )
+    _, annotations_post_filter = filter_utils.split_filter(
+        annotations_filter, ["id", "recording_id"]
+    )
+
+    # Fallback to get_all_windows if any post-filter exists
+    if (
+        deployments_post_filter
+        or recordings_post_filter
+        or windows_post_filter
+        or annotations_post_filter
+    ):
+      windows = self.get_all_windows(
+          include_embedding=False,
+          deployments_filter=deployments_filter,
+          recordings_filter=recordings_filter,
+          filter=windows_filter,
+          annotations_filter=annotations_filter,
+      )
+      matched_external_win_ids = [window.id for window in windows]
+      if limit is not None:
+        return matched_external_win_ids[:limit]
+      return matched_external_win_ids
+
+    # Delegate to underlying DBs
+    matched_external_win_ids = []
+    for db_index, db in enumerate(self._dbs_list):
+      matched_internal_win_ids = db.match_window_ids(
+          deployments_filter=deployments_filter,
+          recordings_filter=recordings_filter,
+          windows_filter=windows_filter,
+          annotations_filter=annotations_filter,
+          limit=limit,
+      )
+      matched_external_win_ids.extend([
+          self._join_id(db_index, matched_internal_win_id)
+          for matched_internal_win_id in matched_internal_win_ids
+      ])
+
     if limit is not None:
-      return ids[:limit]
-    return ids
+      return matched_external_win_ids[:limit]
+    return matched_external_win_ids
 
   def get_all_projects(self) -> Sequence[str]:
     projects = set()
@@ -373,11 +413,20 @@ class MultiDBWrapper(interface.HopliteDBInterface):
   ) -> Sequence[datatypes.Deployment]:
     pass_through_filter, post_filter = filter_utils.split_filter(filter, ["id"])
     candidates = {}
-    for db_index, db in enumerate(self._dbs_list):
-      deployments = db.get_all_deployments(filter=pass_through_filter)
-      for deployment in deployments:
-        deployment_id = self._join_id(db_index, deployment.id)
-        candidates[deployment_id] = deployment.replace(id=deployment_id)
+
+    def _fetch_deployments(db_index, db):
+      return db_index, db.get_all_deployments(filter=pass_through_filter)
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+      futures = [
+          executor.submit(_fetch_deployments, db_index, db)
+          for db_index, db in enumerate(self._dbs_list)
+      ]
+      for future in concurrent.futures.as_completed(futures):
+        db_index, deployments = future.result()
+        for deployment in deployments:
+          deployment_id = self._join_id(db_index, deployment.id)
+          candidates[deployment_id] = deployment.replace(id=deployment_id)
 
     if post_filter is None:
       return list(candidates.values())
@@ -397,18 +446,27 @@ class MultiDBWrapper(interface.HopliteDBInterface):
         filter, ["id", "deployment_id"]
     )
     candidates = {}
-    for db_index, db in enumerate(self._dbs_list):
-      recordings = db.get_all_recordings(filter=pass_through_filter)
-      for recording in recordings:
-        recording_id = self._join_id(db_index, recording.id)
-        candidates[recording_id] = recording.replace(
-            id=recording_id,
-            deployment_id=(
-                self._join_id(db_index, recording.deployment_id)
-                if recording.deployment_id is not None
-                else None
-            ),
-        )
+
+    def _fetch_recordings(db_index, db):
+      return db_index, db.get_all_recordings(filter=pass_through_filter)
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+      futures = [
+          executor.submit(_fetch_recordings, db_index, db)
+          for db_index, db in enumerate(self._dbs_list)
+      ]
+      for future in concurrent.futures.as_completed(futures):
+        db_index, recordings = future.result()
+        for recording in recordings:
+          recording_id = self._join_id(db_index, recording.id)
+          candidates[recording_id] = recording.replace(
+              id=recording_id,
+              deployment_id=(
+                  self._join_id(db_index, recording.deployment_id)
+                  if recording.deployment_id is not None
+                  else None
+              ),
+          )
 
     if post_filter is None:
       return list(candidates.values())
@@ -443,20 +501,29 @@ class MultiDBWrapper(interface.HopliteDBInterface):
     )
 
     candidates = {}
-    for db_index, db in enumerate(self._dbs_list):
-      windows = db.get_all_windows(
+
+    def _fetch_windows(db_index, db):
+      return db_index, db.get_all_windows(
           include_embedding=include_embedding,
           deployments_filter=deployments_pass_through_filter,
           recordings_filter=recordings_pass_through_filter,
           filter=pass_through_filter,
           annotations_filter=annotations_pass_through_filter,
       )
-      for window in windows:
-        window_id = self._join_id(db_index, window.id)
-        candidates[window_id] = window.replace(
-            id=window_id,
-            recording_id=self._join_id(db_index, window.recording_id),
-        )
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+      futures = [
+          executor.submit(_fetch_windows, db_index, db)
+          for db_index, db in enumerate(self._dbs_list)
+      ]
+      for future in concurrent.futures.as_completed(futures):
+        db_index, windows = future.result()
+        for window in windows:
+          window_id = self._join_id(db_index, window.id)
+          candidates[window_id] = window.replace(
+              id=window_id,
+              recording_id=self._join_id(db_index, window.recording_id),
+          )
 
     matched_ids = set(candidates.keys())
     if post_filter:
@@ -524,14 +591,23 @@ class MultiDBWrapper(interface.HopliteDBInterface):
         filter, ["id", "recording_id"]
     )
     candidates = {}
-    for db_index, db in enumerate(self._dbs_list):
-      annotations = db.get_all_annotations(filter=pass_through_filter)
-      for annotation in annotations:
-        annotation_id = self._join_id(db_index, annotation.id)
-        candidates[annotation_id] = annotation.replace(
-            id=annotation_id,
-            recording_id=self._join_id(db_index, annotation.recording_id),
-        )
+
+    def _fetch_annotations(db_index, db):
+      return db_index, db.get_all_annotations(filter=pass_through_filter)
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+      futures = [
+          executor.submit(_fetch_annotations, db_index, db)
+          for db_index, db in enumerate(self._dbs_list)
+      ]
+      for future in concurrent.futures.as_completed(futures):
+        db_index, annotations = future.result()
+        for annotation in annotations:
+          annotation_id = self._join_id(db_index, annotation.id)
+          candidates[annotation_id] = annotation.replace(
+              id=annotation_id,
+              recording_id=self._join_id(db_index, annotation.recording_id),
+          )
 
     if post_filter is None:
       return list(candidates.values())

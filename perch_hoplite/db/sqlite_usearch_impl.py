@@ -402,6 +402,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   _cursor: sqlite3.Cursor | None = None
   _ui_loaded: bool = False
   _ui_updated: bool = False
+  _readonly: bool = False
 
   @property
   def sqlite_path(self) -> epath.Path:
@@ -528,6 +529,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       cls,
       db_path: str,
       usearch_cfg: config_dict.ConfigDict | None = None,
+      readonly: bool = False,
   ) -> 'SQLiteUSearchDB':
     """Connect to and, if needed, initialize the database.
 
@@ -535,6 +537,13 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       db_path: The path to the database directory.
       usearch_cfg: The configuration for the USearch index. If None, the config
         is loaded from the DB.
+      readonly: If True, opens the database in read-only mode.
+
+    Raises:
+      ValueError: If `usearch_cfg` is inconsistent with the DB or if no config
+        is found in the DB and none was provided.
+      FileNotFoundError: If `readonly` is True and the USearch index file does
+        not exist.
 
     Returns:
       A new instance of the database.
@@ -542,12 +551,24 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
     # Create the SQLite DB.
     db_path = epath.Path(db_path)
-    db_path.mkdir(parents=True, exist_ok=True)
+    if not readonly:
+      db_path.mkdir(parents=True, exist_ok=True)
     sqlite_path = db_path / HOPLITE_FILENAME
-    db = sqlite3.connect(
-        sqlite_path.as_posix(),
-        detect_types=sqlite3.PARSE_DECLTYPES,
-    )
+
+    if readonly:
+      db = sqlite3.connect(
+          f'file:{sqlite_path.as_posix()}?mode=ro',
+          uri=True,
+          detect_types=sqlite3.PARSE_DECLTYPES,
+          check_same_thread=False,
+      )
+    else:
+      db = sqlite3.connect(
+          sqlite_path.as_posix(),
+          detect_types=sqlite3.PARSE_DECLTYPES,
+          check_same_thread=False,
+      )
+
     db.create_function(
         name='APPROX_FLOAT_LIST',
         narg=2,
@@ -570,9 +591,11 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
         lambda statement: logging.info('Executed SQL statement: %s', statement)
     )
     cursor = db.cursor()
-    cursor.execute('PRAGMA journal_mode = WAL')  # Enable WAL mode.
-    cls._setup_tables(cursor)
-    db.commit()
+
+    if not readonly:
+      cursor.execute('PRAGMA journal_mode = WAL')  # Enable WAL mode.
+      cls._setup_tables(cursor)
+      db.commit()
 
     # Retrieve the metadata.
     # TODO(tomdenton): Check that `usearch_cfg` is consistent with the DB.
@@ -602,6 +625,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       )
       ui_in_memory = False
     else:
+      if readonly:
+        raise FileNotFoundError(f'USearch index not found at {index_path}')
       ui = uindex.Index(
           ndim=usearch_cfg.embedding_dim,
           metric=getattr(uindex.MetricKind, usearch_cfg.metric_name),
@@ -622,9 +647,14 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
         _embedding_dtype=usearch_cfg.dtype,
         _ui_loaded=ui_in_memory,
         _ui_updated=ui_in_memory,
+        _readonly=readonly,
     )
-    hoplite_db.insert_metadata(USEARCH_CONFIG_KEY, usearch_cfg)
-    hoplite_db.commit()
+
+    metadata_already_present = USEARCH_CONFIG_KEY in metadata
+    if not readonly and not metadata_already_present:
+      hoplite_db.insert_metadata(USEARCH_CONFIG_KEY, usearch_cfg)
+      hoplite_db.commit()
+
     return hoplite_db
 
   def add_extra_table_column(
@@ -721,7 +751,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
   def thread_split(self) -> 'SQLiteUSearchDB':
     """Get a new instance of the SQLite DB."""
-    return self.create(self.db_path.as_posix())
+    return self.create(self.db_path.as_posix(), readonly=self._readonly)
 
   def _get_cursor(self) -> sqlite3.Cursor:
     """Get the SQLite cursor."""
@@ -1234,6 +1264,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
           f' {itertools.compress(window_ids, ~found)}'
       )
     embeddings_batch = self.ui.get(window_ids)
+    if isinstance(embeddings_batch, (tuple, list)):
+      embeddings_batch = np.stack(embeddings_batch)
     if not isinstance(embeddings_batch, np.ndarray):
       raise RuntimeError(
           'Expected np.ndarray result from the USearch `get()` method, but got'

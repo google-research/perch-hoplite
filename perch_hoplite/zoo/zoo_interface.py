@@ -25,7 +25,6 @@ import librosa
 from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.taxonomy import namespace
-import tensorflow as tf
 
 LogitType = Dict[str, np.ndarray]
 
@@ -164,7 +163,7 @@ class EmbeddingModel:
 
 @dataclasses.dataclass
 class LogitsOutputHead:
-  """A TensorFlow model which classifies embeddings.
+  """A model which classifies embeddings.
 
   Attributes:
     model_path: Path to saved model.
@@ -174,6 +173,7 @@ class LogitsOutputHead:
     class_list: ClassList specifying the ordered classes.
     channel_pooling: Pooling to apply to channel dimension of logits. Specify an
       empty string to apply no pooling.
+    model_type: Type of the model (e.g. 'tf_saved_model').
   """
 
   model_path: str
@@ -181,6 +181,11 @@ class LogitsOutputHead:
   logits_model: Any
   class_list: namespace.ClassList
   channel_pooling: str = 'max'
+  model_type: str = 'tf_saved_model'
+
+  def __post_init__(self):
+    if self.model_type != 'tf_saved_model':
+      raise ValueError(f'Unknown model type: {self.model_type}')
 
   @classmethod
   def from_config_file(cls, model_path: str, filename='logits_config.json'):
@@ -192,7 +197,13 @@ class LogitsOutputHead:
 
   @classmethod
   def from_config(cls, config: config_dict.ConfigDict):
-    logits_model = tf.saved_model.load(config.model_path)
+    model_type = config.get('model_type', 'tf_saved_model')
+    if model_type == 'tf_saved_model':
+      import tensorflow as tf  # pylint: disable=g-import-not-at-top
+
+      logits_model = tf.saved_model.load(config.model_path)
+    else:
+      raise ValueError(f'Unknown model type: {model_type}')
     model_path = epath.Path(config.model_path)
     with (model_path / 'class_list.csv').open('r') as f:
       class_list = namespace.ClassList.from_csv(f)
@@ -221,7 +232,12 @@ class LogitsOutputHead:
   def save_model(self, output_path: str, embeddings_path: str):
     """Write a SavedModel and metadata to disk."""
     # Write the model.
-    tf.saved_model.save(self.logits_model, output_path)
+    if self.model_type == 'tf_saved_model':
+      import tensorflow as tf  # pylint: disable=g-import-not-at-top
+
+      tf.saved_model.save(self.logits_model, output_path)
+    else:
+      raise ValueError(f'Unknown model type: {self.model_type}')
     output_path = epath.Path(output_path)
     # Write a config file.
     config_data = dataclasses.asdict(self)

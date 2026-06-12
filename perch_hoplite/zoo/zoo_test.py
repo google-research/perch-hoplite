@@ -15,6 +15,7 @@
 
 """Tests for mass-embedding functionality."""
 
+from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.zoo import model_configs
 from perch_hoplite.zoo import zoo_interface
@@ -92,6 +93,41 @@ class ZooTest(parameterized.TestCase):
     fake_audio = np.zeros([5 * 32000], dtype=np.float32)
     outputs = model.embed(fake_audio)
     self.assertSequenceEqual(outputs.embeddings.shape, [5, 1, 80])
+
+  def test_logits_output_head_model_type(self):
+    class_list = zoo_interface.namespace.ClassList('fake', ['alpha', 'beta'])
+    # Valid defaults
+    head = zoo_interface.LogitsOutputHead(
+        model_path='/dev/null',
+        logits_key='output_head',
+        logits_model=None,
+        class_list=class_list,
+    )
+    self.assertEqual(head.model_type, 'tf_saved_model')
+
+    # Instantiating with invalid model type raises ValueError
+    with self.assertRaisesRegex(ValueError, 'Unknown model type'):
+      zoo_interface.LogitsOutputHead(
+          model_path='/dev/null',
+          logits_key='output_head',
+          logits_model=None,
+          class_list=class_list,
+          model_type='unrecognized_type',
+      )
+
+    # Test from_config with invalid model_type
+    config = config_dict.ConfigDict({
+        'model_path': '/dev/null',
+        'logits_key': 'output_head',
+        'model_type': 'unrecognized_type',
+    })
+    with self.assertRaisesRegex(ValueError, 'Unknown model type'):
+      zoo_interface.LogitsOutputHead.from_config(config)
+
+    # Bypassing __post_init__ to test save_model validation
+    head.model_type = 'unrecognized_type'
+    with self.assertRaisesRegex(ValueError, 'Unknown model type'):
+      head.save_model('/dev/null', '')
 
 
 if __name__ == '__main__':

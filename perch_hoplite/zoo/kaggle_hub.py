@@ -13,10 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Wrapper for loading models from KaggleHub with backwards compatibility."""
+"""Wrapper for loading TensorFlow models from KaggleHub with back-compat.
+
+The Kaggle/TF sibling of `hf_hub.py`: it both downloads from KaggleHub and
+returns loaded TensorFlow SavedModels, so TensorFlow is a hard, top-level
+dependency here. Models that use a different runtime import their own.
+"""
 
 import kagglehub
-import tensorflow as tf
 
 # Older model configs may contain a full model URL, as we used with TFHub.
 # These are kept for back-compat, and converted to Kaggle Models slugs.
@@ -68,6 +72,8 @@ def normalize_slug(model_slug: str, model_version: int | None = None) -> str:
 
 def load(model_slug: str, model_version: int | None = None):
   """Download and load a model from KaggleHub."""
+  import tensorflow as tf  # pylint: disable=g-import-not-at-top
+
   if model_slug.startswith('/tmp'):
     # Assume this is a path to a downloaded model, rather than a kaggle model.
     return tf.saved_model.load(model_slug)
@@ -78,11 +84,15 @@ def load(model_slug: str, model_version: int | None = None):
   return model
 
 
-def resolve(model_slug: str, model_version: int | None = None) -> str:
+def resolve(
+    model_slug: str,
+    model_version: int | None = None,
+    path: str | None = None,
+) -> str:
   """Download a model from KaggleHub and return the cached model's path."""
   if model_slug.startswith('/tmp'):
     # Assume this is a path to a downloaded model, rather than a kaggle model.
     return model_slug
   model_path = normalize_slug(model_slug, model_version)
-  cached_model_path = kagglehub.model_download(model_path)
+  cached_model_path = kagglehub.model_download(model_path, path=path)
   return cached_model_path

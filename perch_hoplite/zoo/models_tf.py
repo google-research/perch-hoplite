@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Implementations of inference interfaces for applying trained models."""
+"""Implementations of inference interfaces for applying trained TensorFlow models."""
 
 import dataclasses
 import tempfile
@@ -25,7 +25,7 @@ from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.taxonomy import namespace
 from perch_hoplite.taxonomy import namespace_db
-from perch_hoplite.zoo import hub
+from perch_hoplite.zoo import kaggle_hub
 from perch_hoplite.zoo import taxonomy_model_tf
 from perch_hoplite.zoo import zoo_interface
 import tensorflow as tf
@@ -440,10 +440,10 @@ class GoogleWhaleModel(zoo_interface.EmbeddingModel):
   @classmethod
   def load_humpback_model(
       cls,
-      model_url: str = hub.HUMPBACK_SLUG,
+      model_url: str = kaggle_hub.HUMPBACK_SLUG,
       **kwargs,
   ) -> 'GoogleWhaleModel':
-    model = hub.load(model_url)
+    model = kaggle_hub.load(model_url)
     class_list = namespace.ClassList('humpback', ('humpback',))
     sample_rate = model.metadata()['input_sample_rate'].numpy()
     window_size_s = model.metadata()['context_width_samples'] / sample_rate
@@ -459,7 +459,7 @@ class GoogleWhaleModel(zoo_interface.EmbeddingModel):
 
   @classmethod
   def from_config(cls, config: config_dict.ConfigDict) -> 'GoogleWhaleModel':
-    model = hub.load(config.model_url)
+    model = kaggle_hub.load(config.model_url)
     class_names = tuple(
         [str(c.numpy(), 'utf8') for c in model.metadata()['class_names']]
     )
@@ -518,7 +518,7 @@ class TFHubModel(zoo_interface.EmbeddingModel):
 
   @classmethod
   def from_config(cls, config: config_dict.ConfigDict) -> 'TFHubModel':
-    model = hub.load(config.model_url)
+    model = kaggle_hub.load(config.model_url)
     return cls(
         model=model,
         **config,

@@ -18,9 +18,10 @@
 import dataclasses
 import enum
 import importlib
+from typing import Callable
 
 from ml_collections import config_dict
-from perch_hoplite.zoo import hub
+from perch_hoplite.zoo import kaggle_hub
 from perch_hoplite.zoo import zoo_interface
 
 
@@ -44,6 +45,7 @@ class ModelConfigName(enum.Enum):
   AVES = 'aves'
   BIRDAVES = 'birdaves'
   PLACEHOLDER = 'placeholder'
+  PERCH_V2_ONNX = 'perch_v2_onnx'
 
 
 @dataclasses.dataclass
@@ -55,12 +57,14 @@ class PresetInfo:
     model_config: The model config.
     model_key: The short name for the model class.
     embedding_dim: The embedding dimension of the model.
+    resolve_fn: Optional callback to resolve dynamic config values at load time.
   """
 
   preset_name: str
   model_config: config_dict.ConfigDict
   model_key: str
   embedding_dim: int
+  resolve_fn: Callable[[config_dict.ConfigDict], None] | None = None
 
   def get_model_class(self) -> type[zoo_interface.EmbeddingModel]:
     """Convenience method to get the model class for this preset."""
@@ -68,7 +72,10 @@ class PresetInfo:
 
   def load_model(self) -> zoo_interface.EmbeddingModel:
     """Loads the embedding model."""
-    return get_model_class(self.model_key).from_config(self.model_config)
+    cfg = config_dict.ConfigDict(self.model_config)
+    if self.resolve_fn is not None:
+      self.resolve_fn(cfg)
+    return get_model_class(self.model_key).from_config(cfg)
 
 
 def has_gpu_tf() -> bool:
@@ -119,6 +126,9 @@ def get_model_class(model_key: str) -> type[zoo_interface.EmbeddingModel]:
         'perch_hoplite.zoo.handcrafted_features_model'
     )
     return _get_obj(module, 'HandcraftedFeaturesModel')
+  elif model_key == 'perch_v2_onnx':
+    module = importlib.import_module('perch_hoplite.zoo.models_onnx')
+    return _get_obj(module, 'PerchV2OnnxModel')
   else:
     raise ValueError(f'Unknown model key: {model_key}')
 
@@ -150,6 +160,7 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
   """Get a config_dict for a known model."""
   model_config = config_dict.ConfigDict()
   preset_name = ModelConfigName(preset_name)
+  resolve_fn = None
 
   if preset_name == ModelConfigName.PERCH_8:
     model_key = 'taxonomy_model_tf'
@@ -177,7 +188,7 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_config.sample_rate = 32000
     taxonomy_model_tf = importlib.import_module(
         'perch_hoplite.zoo.taxonomy_model_tf')
-    model_config.tfhub_path = hub.PERCH_V2_SLUG
+    model_config.tfhub_path = kaggle_hub.PERCH_V2_SLUG
     model_config.tfhub_version = 2
     model_config.model_path = ''
   elif preset_name == ModelConfigName.PERCH_V2_CPU:
@@ -188,7 +199,7 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_config.sample_rate = 32000
     taxonomy_model_tf = importlib.import_module(
         'perch_hoplite.zoo.taxonomy_model_tf')
-    model_config.tfhub_path = hub.PERCH_V2_CPU_SLUG
+    model_config.tfhub_path = kaggle_hub.PERCH_V2_CPU_SLUG
     model_config.tfhub_version = 1
     model_config.model_path = ''
   elif preset_name == ModelConfigName.HUMPBACK:
@@ -214,7 +225,7 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     taxonomy_model_tf = importlib.import_module(
         'perch_hoplite.zoo.taxonomy_model_tf')
     model_config.tfhub_version = 1
-    model_config.tfhub_path = hub.SURFPERCH_SLUG
+    model_config.tfhub_path = kaggle_hub.SURFPERCH_SLUG
     model_config.model_path = ''
   elif preset_name.value.startswith('birdnet'):
     model_key = 'birdnet'
@@ -255,14 +266,14 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_key = 'tfhub_model'
     embedding_dim = 1024
     model_config.sample_rate = 16000
-    model_config.model_url = hub.YAMNET_SLUG
+    model_config.model_url = kaggle_hub.YAMNET_SLUG
     model_config.embedding_index = 1
     model_config.logits_index = 0
   elif preset_name == ModelConfigName.VGGISH:
     model_key = 'tfhub_model'
     embedding_dim = 128
     model_config.sample_rate = 16000
-    model_config.model_url = hub.VGGISH_SLUG
+    model_config.model_url = kaggle_hub.VGGISH_SLUG
     model_config.embedding_index = -1
     model_config.logits_index = -1
   elif preset_name == ModelConfigName.AVES:
@@ -283,6 +294,18 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_config.model_path = cache_fn(
         'https://storage.googleapis.com/esp-public-files/birdaves/birdaves-biox-large.onnx'
     )
+  elif preset_name == ModelConfigName.PERCH_V2_ONNX:
+    model_key = 'perch_v2_onnx'
+    embedding_dim = 1536
+    model_config.sample_rate = 32000
+    model_config.window_size_s = 5.0
+    model_config.peak_norm = 0.25
+    model_config.output_map = {
+        'embedding': 'embedding',
+        'logits': 'label',
+        'frontend': 'spectrogram',
+    }
+    # No resolve_fn needed, PerchOnnxModel handles downloads.
   elif preset_name == ModelConfigName.PLACEHOLDER:
     model_key = 'placeholder'
     embedding_dim = 128
@@ -302,4 +325,5 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
       model_config=model_config,
       model_key=model_key,
       embedding_dim=embedding_dim,
+      resolve_fn=resolve_fn,
   )

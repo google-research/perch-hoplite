@@ -23,7 +23,7 @@ from etils import epath
 from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.taxonomy import namespace
-from perch_hoplite.zoo import hub
+from perch_hoplite.zoo import kaggle_hub
 from perch_hoplite.zoo import zoo_interface
 import tensorflow as tf
 
@@ -87,13 +87,13 @@ class TaxonomyModelTF(zoo_interface.EmbeddingModel):
       )
 
     # This model behaves exactly like the usual saved_model.
-    model = hub.load(tfhub_path, config.tfhub_version)
+    model = kaggle_hub.load(tfhub_path, config.tfhub_version)
 
     # Check whether the model support polymorphic batch shape.
     batchable = cls.is_batchable(model)
 
     # Get the labels CSV from TFHub.
-    model_path = hub.resolve(tfhub_path, config.tfhub_version)
+    model_path = kaggle_hub.resolve(tfhub_path, config.tfhub_version)
     class_lists_glob = (epath.Path(model_path) / 'assets').glob('*.csv')
     class_lists = cls.load_class_lists(class_lists_glob)
     mutable_config = config.copy_and_resolve_references()
@@ -132,7 +132,7 @@ class TaxonomyModelTF(zoo_interface.EmbeddingModel):
         'hop_size_s': hop_size_s,
         'target_peak': 0.25,
         'tfhub_version': tfhub_version,
-        'tfhub_path': hub.SURFPERCH_SLUG,
+        'tfhub_path': kaggle_hub.SURFPERCH_SLUG,
     })
     return cls.from_tfhub(cfg)
 
@@ -148,7 +148,7 @@ class TaxonomyModelTF(zoo_interface.EmbeddingModel):
         'hop_size_s': hop_size_s,
         'target_peak': 0.25,
         'tfhub_version': tfhub_version,
-        'tfhub_path': hub.PERCH_V2_SLUG,
+        'tfhub_path': kaggle_hub.PERCH_V2_SLUG,
     })
     return cls.from_tfhub(cfg)
 

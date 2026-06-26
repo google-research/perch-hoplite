@@ -52,6 +52,8 @@ class TaxonomyModelOnnx(zoo_interface.EmbeddingModel):
       tensor names. Missing roles are skipped.
     model_path: Local path to the `.onnx` file (resolved by the caller).
     class_list: Loaded class_lists for the model's output logits.
+    logit_slope: Slope for linear logit transform.
+    logit_intercept: Intercept for linear logit transform.
   """
 
   window_size_s: float = 5.0
@@ -63,6 +65,8 @@ class TaxonomyModelOnnx(zoo_interface.EmbeddingModel):
   class_list: dict[str, namespace.ClassList] = dataclasses.field(
       default_factory=dict
   )
+  logit_slope: float = 1.0
+  logit_intercept: float = 0.0
 
   def __post_init__(self):
     if not self.model_path:
@@ -122,6 +126,7 @@ class TaxonomyModelOnnx(zoo_interface.EmbeddingModel):
     if logits is not None:
       logit_map = {}
       logits_val = np.asarray(results[wanted['logits']]).reshape(num_frames, -1)
+      logits_val = logits_val * self.logit_slope + self.logit_intercept
       if len(self.class_list) == 1:
         key = list(self.class_list.keys())[0]
         logit_map[key] = logits_val

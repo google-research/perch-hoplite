@@ -186,6 +186,8 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_config.window_size_s = 5.0
     model_config.hop_size_s = 5.0
     model_config.sample_rate = 32000
+    model_config.logit_slope = 0.97
+    model_config.logit_intercept = -10.0
     taxonomy_model_tf = importlib.import_module(
         'perch_hoplite.zoo.taxonomy_model_tf')
     model_config.tfhub_path = kaggle_hub.PERCH_V2_SLUG
@@ -197,6 +199,8 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_config.window_size_s = 5.0
     model_config.hop_size_s = 5.0
     model_config.sample_rate = 32000
+    model_config.logit_slope = 0.97
+    model_config.logit_intercept = -10.0
     taxonomy_model_tf = importlib.import_module(
         'perch_hoplite.zoo.taxonomy_model_tf')
     model_config.tfhub_path = kaggle_hub.PERCH_V2_CPU_SLUG
@@ -300,6 +304,8 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_config.sample_rate = 32000
     model_config.window_size_s = 5.0
     model_config.peak_norm = 0.25
+    model_config.logit_slope = 0.97
+    model_config.logit_intercept = -10.0
     model_config.output_map = {
         'embedding': 'embedding',
         'logits': 'label',

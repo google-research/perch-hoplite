@@ -143,5 +143,33 @@ class ZooTest(parameterized.TestCase):
     if batchable and model_return_type == 'dict':
       self.assertSequenceEqual(outputs.frontend.shape, [2, 4, 500, 128])
 
+  def test_taxonomy_model_tf_logit_transform(self):
+    class FakeModelFn:
+
+      def infer_tf(self, audio_array):
+        # Return logits of all ones and fake embeddings
+        return np.ones([audio_array.shape[0], 3], dtype=np.float32), np.zeros(
+            [audio_array.shape[0], 256], dtype=np.float32
+        )
+
+    class_list = {
+        'label': namespace.ClassList('fake', ['alpha', 'beta', 'delta'])
+    }
+    wrapped_model = taxonomy_model_tf.TaxonomyModelTF(
+        sample_rate=32000,
+        model_path='/dev/null',
+        window_size_s=5.0,
+        hop_size_s=5.0,
+        model=FakeModelFn(),
+        class_list=class_list,
+        batchable=False,
+        logit_slope=0.5,
+        logit_intercept=2.0,
+    )
+    outputs = wrapped_model.embed(np.zeros([5 * 32000], dtype=np.float32))
+    # Original logits returned by FakeModelFn was 1.0.
+    # Applied transform: logits * slope + intercept = 1.0 * 0.5 + 2.0 = 2.5
+    np.testing.assert_allclose(outputs.logits['label'], 2.5)
+
 if __name__ == '__main__':
   absltest.main()

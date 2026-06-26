@@ -41,6 +41,8 @@ class TaxonomyModelTF(zoo_interface.EmbeddingModel):
     class_list: Loaded class_list for the model's output logits.
     batchable: Whether the model supports batched input.
     target_peak: Peak normalization value.
+    logit_slope: Slope for linear logit transform.
+    logit_intercept: Intercept for linear logit transform.
   """
 
   model_path: str
@@ -52,6 +54,8 @@ class TaxonomyModelTF(zoo_interface.EmbeddingModel):
   target_peak: float | None = 0.25
   tfhub_path: str | None = None
   tfhub_version: int | None = None
+  logit_slope: float = 1.0
+  logit_intercept: float = 0.0
 
   @classmethod
   def is_batchable(cls, model: Any) -> bool:
@@ -149,6 +153,8 @@ class TaxonomyModelTF(zoo_interface.EmbeddingModel):
         'target_peak': 0.25,
         'tfhub_version': tfhub_version,
         'tfhub_path': kaggle_hub.PERCH_V2_SLUG,
+        'logit_slope': 0.97,
+        'logit_intercept': -10.0,
     })
     return cls.from_tfhub(cfg)
 
@@ -297,6 +303,8 @@ class TaxonomyModelTF(zoo_interface.EmbeddingModel):
       raise ValueError('Unexpected outputs type.')
 
     for k, v in logits.items():
+      v = np.asarray(v)
+      v = v * self.logit_slope + self.logit_intercept
       logits[k] = np.reshape(v, framed_audio.shape[:2] + (v.shape[-1],))
     # Unbatch and add channel dimension.
     embeddings = np.reshape(

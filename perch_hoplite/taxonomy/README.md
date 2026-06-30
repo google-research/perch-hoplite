@@ -46,14 +46,34 @@ program.
 
 ## Data storage
 
-The taxonomy data is stored as a plain text database in the form of a large JSON
-file. This makes it easy to see the revision history of the database.
+The taxonomy data is stored as an SQLite database file
+(`taxonomy_database.sqlite`). Under the hood, this database utilizes a
+normalized relational schema to record unique strings (e.g., labels),
+namespaces, class lists, and mappings. To migrate from the old JSON schema
+or generate the database file, use the `convert_database.ipynb` notebook.
+
+## Algebraic Operations and Extended Identity
+
+Namespaces support algebraic set operations:
+
+*   **Unions and Differences**: You can combine or subtract namespaces
+    directly in Python using standard operators (e.g. `ns_c = ns_a + ns_b`
+    or `ns_d = ns_a - ns_b`).
+*   **Algebraic Expression Lookup**: You can fetch namespaces dynamically by
+    using parseable algebraic expressions containing standard operators and
+    parentheses, e.g., `db.namespaces['(ebird2021 + ebird2022) - caples']`.
+*   **Extended Identity Mappings**: Mappings are constructed with automated
+    default identity support. When mapping from namespace A to B, any shared
+    elements `x` belonging to both A and B are mapped to themselves
+    (`m(x) = x`) by default, unless overridden by the mapping pairs.
+    This is helpful for defining mappings that are mostly trivial, like
+    year-on-year updates of large taxonomies.
 
 ## Data consistency
 
-When a taxonomy database is loaded or saved, it is automatically tested for
-consistency. This means, e.g., that the labels in a class list are a member of
-the namespace that the class list belongs to.
+When a taxonomy database is loaded, it is automatically tested for consistency.
+This means, e.g., that the labels in a class list are a member of the
+namespace that the class list belongs to.
 
 ## Recommendations
 

@@ -13,18 +13,51 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Database of bioacoustic label domains."""
+"""Database of bioacoustic label domains.
 
-import dataclasses
+This module provides the TaxonomyDatabase class, which handles namespaces of
+class labels, mapped pairs, and class lists using an SQLite backend.
+
+Database Schema Design:
+1. strings: A unique registry of all text values (labels, namespace names,
+   etc.) loaded into the database, mapped to auto-incrementing integer uids to
+   avoid duplicating strings.
+2. namespaces: Stores basic namespace entities.
+3. namespace_strings: Join table associating a namespace with a set of label
+   string UIDs. This models namespaces structurally as sets of integers.
+4. class_lists & class_list_strings: Stores class list metadata and their
+   ordered sequence of label string UIDs (ordering preserved via idx column).
+5. mappings & mapping_pairs: Stores conversion mappings from a source
+   namespace to a target namespace, along with mapped pairs override records.
+
+Algebraic Operations & Notation:
+- Set Arithmetic: The Namespace class implements set union (+) and set
+  difference (-).
+- Notation Parser: A recursive-descent parser supports evaluating dynamic,
+  nested algebraic expressions (e.g. db.namespaces['(A + B) - C']), which
+  resolves the base namespaces from SQLite and computes the resulting Namespace
+  on the fly.
+
+Extended Identity:
+- Mappings have a default boolean flag. If True (or if evaluated as a default
+  mapping), any shared items x in the intersection of the source and target
+  namespaces will map to themselves by default (m(x) = x) without needing to
+  be explicitly recorded as mappings. Explicit entries in mapping_pairs override
+  this behavior.
+"""
+
+import collections.abc
 import functools
 import json
 import os
+import re
+import sqlite3
 import typing
 
 from perch_hoplite import path_utils
 from perch_hoplite.taxonomy import namespace
 
-TAXONOMY_DATABASE_FILENAME = "taxonomy/taxonomy_database.json"
+TAXONOMY_DATABASE_FILENAME = "taxonomy/taxonomy_database.sqlite"
 
 
 ClassListType = str | namespace.ClassList | tuple[str, ...]
@@ -80,11 +113,535 @@ def num_classes(class_list: ClassListType) -> int:
   return len(get_classes(class_list))
 
 
-@dataclasses.dataclass
+def create_tables(conn: sqlite3.Connection) -> None:
+  """Creates all necessary SQLite tables and indexes."""
+  cursor = conn.cursor()
+  cursor.execute("PRAGMA foreign_keys = ON;")
+
+  cursor.execute("""
+  CREATE TABLE IF NOT EXISTS strings (
+      uid INTEGER PRIMARY KEY AUTOINCREMENT,
+      value TEXT UNIQUE
+  );
+  """)
+
+  cursor.execute("""
+  CREATE TABLE IF NOT EXISTS namespaces (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE
+  );
+  """)
+
+  cursor.execute("""
+  CREATE TABLE IF NOT EXISTS namespace_strings (
+      namespace_id INTEGER,
+      string_uid INTEGER,
+      PRIMARY KEY (namespace_id, string_uid),
+      FOREIGN KEY (namespace_id) REFERENCES namespaces(id) ON DELETE CASCADE,
+      FOREIGN KEY (string_uid) REFERENCES strings(uid) ON DELETE CASCADE
+  );
+  """)
+
+  cursor.execute("""
+  CREATE TABLE IF NOT EXISTS class_lists (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE,
+      namespace_name TEXT
+  );
+  """)
+
+  cursor.execute("""
+  CREATE TABLE IF NOT EXISTS class_list_strings (
+      class_list_id INTEGER,
+      string_uid INTEGER,
+      idx INTEGER,
+      PRIMARY KEY (class_list_id, idx),
+      FOREIGN KEY (class_list_id) REFERENCES class_lists(id) ON DELETE CASCADE,
+      FOREIGN KEY (string_uid) REFERENCES strings(uid) ON DELETE CASCADE
+  );
+  """)
+
+  cursor.execute("""
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_class_list_strings_uid
+  ON class_list_strings (class_list_id, string_uid);
+  """)
+
+  cursor.execute("""
+  CREATE TABLE IF NOT EXISTS mappings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE,
+      source_namespace_name TEXT,
+      target_namespace_name TEXT,
+      is_default INTEGER DEFAULT 0
+  );
+  """)
+
+  cursor.execute("""
+  CREATE TABLE IF NOT EXISTS mapping_pairs (
+      mapping_id INTEGER,
+      source_string_uid INTEGER,
+      target_string_uid INTEGER,
+      PRIMARY KEY (mapping_id, source_string_uid),
+      FOREIGN KEY (mapping_id) REFERENCES mappings(id) ON DELETE CASCADE,
+      FOREIGN KEY (source_string_uid) REFERENCES strings(uid) ON DELETE CASCADE,
+      FOREIGN KEY (target_string_uid) REFERENCES strings(uid) ON DELETE CASCADE
+  );
+  """)
+  conn.commit()
+
+
+def get_or_insert_strings(
+    conn: sqlite3.Connection, values: list[str]
+) -> dict[str, int]:
+  """Ensures all strings in values are recorded, returning their uids."""
+  if not values:
+    return {}
+  cursor = conn.cursor()
+  unique_values = list(set(values))
+
+  chunk_size = 500
+  existing = {}
+  for i in range(0, len(unique_values), chunk_size):
+    chunk = unique_values[i : i + chunk_size]
+    placeholders = ",".join("?" for _ in chunk)
+    cursor.execute(
+        f"SELECT uid, value FROM strings WHERE value IN ({placeholders})", chunk
+    )
+    for uid, val in cursor.fetchall():
+      existing[val] = uid
+
+  to_insert = [val for val in unique_values if val not in existing]
+  if to_insert:
+    cursor.executemany(
+        "INSERT OR IGNORE INTO strings (value) VALUES (?)",
+        [(val,) for val in to_insert],
+    )
+    for i in range(0, len(to_insert), chunk_size):
+      chunk = to_insert[i : i + chunk_size]
+      placeholders = ",".join("?" for _ in chunk)
+      cursor.execute(
+          f"SELECT uid, value FROM strings WHERE value IN ({placeholders})",
+          chunk,
+      )
+      for uid, val in cursor.fetchall():
+        existing[val] = uid
+  return existing
+
+
+def parse_namespace_expression(
+    expression: str,
+    get_base_namespace_fn: typing.Callable[[str], typing.AbstractSet[str]],
+) -> set[str]:
+  """Parses algebraic namespace expressions like (A + B) - C."""
+  tokens = re.findall(r"[A-Za-z0-9_]+|[-+()]", expression)
+  pos = 0
+
+  def peek():
+    nonlocal pos
+    if pos < len(tokens):
+      return tokens[pos]
+    return None
+
+  def consume(expected=None):
+    nonlocal pos
+    t = peek()
+    if t is None:
+      raise ValueError(
+          f"Parse error in namespace expression '{expression}': unexpected end"
+          " of input"
+      )
+    if expected is not None and t != expected:
+      raise ValueError(
+          f"Parse error in namespace expression '{expression}': expected"
+          f" '{expected}', got '{t}'"
+      )
+    pos += 1
+    return t
+
+  def parse_expression() -> set[str]:
+    result = parse_term()
+    while True:
+      op = peek()
+      if op in ("+", "-"):
+        consume()
+        right = parse_term()
+        if op == "+":
+          result = result.union(right)
+        else:
+          result = result.difference(right)
+      else:
+        break
+    return result
+
+  def parse_term() -> set[str]:
+    t = peek()
+    if t == "(":
+      consume("(")
+      result = parse_expression()
+      consume(")")
+      return result
+    elif t is not None and re.match(r"^[A-Za-z0-9_]+$", t):
+      name = consume()
+      return set(get_base_namespace_fn(name))
+    else:
+      raise ValueError(
+          f"Parse error in namespace expression '{expression}': unexpected"
+          f" token '{t}'"
+      )
+
+  result = parse_expression()
+  if pos < len(tokens):
+    raise ValueError(
+        f"Parse error in namespace expression '{expression}': unexpected"
+        f" trailing tokens: {tokens[pos:]}"
+    )
+  return result
+
+
+class SQLiteNamespacesDict(collections.abc.MutableMapping):
+  """Dictionary-like proxy for namespaces in SQLite."""
+
+  def __init__(self, db: "TaxonomyDatabase"):
+    self._db = db
+
+  def __ior__(self, other: typing.Any) -> typing.Any:
+    self.update(other)
+    return self
+
+  def __or__(self, other: typing.Any) -> typing.Any:
+    res = dict(self)
+    res.update(other)
+    return res
+
+  def __getitem__(self, key: str) -> namespace.Namespace:
+    if "+" in key or "-" in key:
+      try:
+        classes = parse_namespace_expression(
+            key, lambda name: self[name].classes
+        )
+        return namespace.Namespace(classes=frozenset(classes))
+      except (ValueError, KeyError) as e:
+        raise KeyError(
+            f"Could not resolve algebraic namespace '{key}': {e}"
+        ) from e
+
+    cursor = self._db.conn.cursor()
+    cursor.execute("SELECT id FROM namespaces WHERE name = ?", (key,))
+    row = cursor.fetchone()
+    if row is None:
+      raise KeyError(key)
+    ns_id = row[0]
+
+    cursor.execute(
+        """
+      SELECT s.value FROM strings s
+      JOIN namespace_strings ns ON s.uid = ns.string_uid
+      WHERE ns.namespace_id = ?
+    """,
+        (ns_id,),
+    )
+    classes = [r[0] for r in cursor.fetchall()]
+    return namespace.Namespace(classes=frozenset(classes))
+
+  def __setitem__(self, key: str, value: namespace.Namespace) -> None:
+    if not isinstance(value, namespace.Namespace):
+      raise TypeError("Value must be a Namespace object")
+    if "+" in key or "-" in key:
+      raise ValueError("Cannot write to an algebraic namespace name")
+
+    cursor = self._db.conn.cursor()
+    cursor.execute("DELETE FROM namespaces WHERE name = ?", (key,))
+    cursor.execute("INSERT INTO namespaces (name) VALUES (?)", (key,))
+    ns_id = cursor.lastrowid
+
+    classes = list(value.classes)
+    uids = get_or_insert_strings(self._db.conn, classes)
+
+    cursor.executemany(
+        "INSERT INTO namespace_strings (namespace_id, string_uid) VALUES"
+        " (?, ?)",
+        [(ns_id, uids[cls]) for cls in classes],
+    )
+    self._db.conn.commit()
+
+  def __delitem__(self, key: str) -> None:
+    if "+" in key or "-" in key:
+      raise ValueError("Cannot delete an algebraic namespace name")
+    cursor = self._db.conn.cursor()
+    cursor.execute("SELECT 1 FROM namespaces WHERE name = ?", (key,))
+    if cursor.fetchone() is None:
+      raise KeyError(key)
+    cursor.execute("DELETE FROM namespaces WHERE name = ?", (key,))
+    self._db.conn.commit()
+
+  def __iter__(self) -> typing.Iterator[str]:
+    cursor = self._db.conn.cursor()
+    cursor.execute("SELECT name FROM namespaces")
+    return (r[0] for r in cursor.fetchall())
+
+  def __len__(self) -> int:
+    cursor = self._db.conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM namespaces")
+    return cursor.fetchone()[0]
+
+  def __contains__(self, key: object) -> bool:
+    if not isinstance(key, str):
+      return False
+    if "+" in key or "-" in key:
+      tokens = re.findall(r"[A-Za-z0-9_]+", key)
+      for token in tokens:
+        if token not in self:
+          return False
+      return True
+    cursor = self._db.conn.cursor()
+    cursor.execute("SELECT 1 FROM namespaces WHERE name = ?", (key,))
+    return cursor.fetchone() is not None
+
+
+class SQLiteClassListsDict(collections.abc.MutableMapping):
+  """Dictionary-like proxy for class lists in SQLite."""
+
+  def __init__(self, db: "TaxonomyDatabase"):
+    self._db = db
+
+  def __ior__(self, other: typing.Any) -> typing.Any:
+    self.update(other)
+    return self
+
+  def __or__(self, other: typing.Any) -> typing.Any:
+    res = dict(self)
+    res.update(other)
+    return res
+
+  def __getitem__(self, key: str) -> namespace.ClassList:
+    cursor = self._db.conn.cursor()
+    cursor.execute(
+        "SELECT id, namespace_name FROM class_lists WHERE name = ?", (key,)
+    )
+    row = cursor.fetchone()
+    if row is None:
+      raise KeyError(key)
+    cl_id, ns_name = row
+
+    cursor.execute(
+        """
+      SELECT s.value FROM strings s
+      JOIN class_list_strings cls ON s.uid = cls.string_uid
+      WHERE cls.class_list_id = ?
+      ORDER BY cls.idx
+    """,
+        (cl_id,),
+    )
+    classes = tuple(r[0] for r in cursor.fetchall())
+    return namespace.ClassList(namespace=ns_name, classes=classes)
+
+  def __setitem__(self, key: str, value: namespace.ClassList) -> None:
+    if not isinstance(value, namespace.ClassList):
+      raise TypeError("Value must be a ClassList object")
+    cursor = self._db.conn.cursor()
+    cursor.execute("DELETE FROM class_lists WHERE name = ?", (key,))
+    cursor.execute(
+        "INSERT INTO class_lists (name, namespace_name) VALUES (?, ?)",
+        (key, value.namespace),
+    )
+    cl_id = cursor.lastrowid
+
+    classes = list(value.classes)
+    uids = get_or_insert_strings(self._db.conn, classes)
+
+    cursor.executemany(
+        "INSERT INTO class_list_strings (class_list_id, string_uid, idx) VALUES"
+        " (?, ?, ?)",
+        [(cl_id, uids[cls], idx) for idx, cls in enumerate(classes)],
+    )
+    self._db.conn.commit()
+
+  def __delitem__(self, key: str) -> None:
+    cursor = self._db.conn.cursor()
+    cursor.execute("SELECT 1 FROM class_lists WHERE name = ?", (key,))
+    if cursor.fetchone() is None:
+      raise KeyError(key)
+    cursor.execute("DELETE FROM class_lists WHERE name = ?", (key,))
+    self._db.conn.commit()
+
+  def __iter__(self) -> typing.Iterator[str]:
+    cursor = self._db.conn.cursor()
+    cursor.execute("SELECT name FROM class_lists")
+    return (r[0] for r in cursor.fetchall())
+
+  def __len__(self) -> int:
+    cursor = self._db.conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM class_lists")
+    return cursor.fetchone()[0]
+
+  def __contains__(self, key: object) -> bool:
+    if not isinstance(key, str):
+      return False
+    cursor = self._db.conn.cursor()
+    cursor.execute("SELECT 1 FROM class_lists WHERE name = ?", (key,))
+    return cursor.fetchone() is not None
+
+
+class SQLiteMappingsDict(collections.abc.MutableMapping):
+  """Dictionary-like proxy for mappings in SQLite."""
+
+  def __init__(self, db: "TaxonomyDatabase"):
+    self._db = db
+
+  def __ior__(self, other: typing.Any) -> typing.Any:
+    self.update(other)
+    return self
+
+  def __or__(self, other: typing.Any) -> typing.Any:
+    res = dict(self)
+    res.update(other)
+    return res
+
+  def __getitem__(self, key: str) -> namespace.Mapping:
+    cursor = self._db.conn.cursor()
+    cursor.execute(
+        "SELECT id, source_namespace_name, target_namespace_name, is_default"
+        " FROM mappings WHERE name = ?",
+        (key,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+      raise KeyError(key)
+    mapping_id, src_ns_name, tgt_ns_name, is_default = row
+
+    cursor.execute(
+        """
+      SELECT s_src.value, s_tgt.value
+      FROM mapping_pairs mp
+      JOIN strings s_src ON mp.source_string_uid = s_src.uid
+      JOIN strings s_tgt ON mp.target_string_uid = s_tgt.uid
+      WHERE mp.mapping_id = ?
+    """,
+        (mapping_id,),
+    )
+    explicit_pairs = dict(cursor.fetchall())
+
+    try:
+      src_ns = self._db.namespaces[src_ns_name]
+      tgt_ns = self._db.namespaces[tgt_ns_name]
+      common = src_ns.classes.intersection(tgt_ns.classes)
+      mapped_pairs = {x: x for x in common}
+    except KeyError:
+      mapped_pairs = {}
+
+    mapped_pairs.update(explicit_pairs)
+
+    return namespace.Mapping(
+        source_namespace=src_ns_name,
+        target_namespace=tgt_ns_name,
+        mapped_pairs=mapped_pairs,
+        default=bool(is_default),
+    )
+
+  def __setitem__(self, key: str, value: namespace.Mapping) -> None:
+    if not isinstance(value, namespace.Mapping):
+      raise TypeError("Value must be a Mapping object")
+    cursor = self._db.conn.cursor()
+    cursor.execute("DELETE FROM mappings WHERE name = ?", (key,))
+    cursor.execute(
+        "INSERT INTO mappings (name, source_namespace_name,"
+        " target_namespace_name, is_default) VALUES (?, ?, ?, ?)",
+        (
+            key,
+            value.source_namespace,
+            value.target_namespace,
+            int(value.default),
+        ),
+    )
+    mapping_id = cursor.lastrowid
+
+    try:
+      src_ns = self._db.namespaces[value.source_namespace]
+      tgt_ns = self._db.namespaces[value.target_namespace]
+      common = src_ns.classes.intersection(tgt_ns.classes)
+    except KeyError:
+      common = set()
+
+    pairs_to_save = {}
+    for k, v in value.mapped_pairs.items():
+      if k == v and k in common:
+        continue
+      pairs_to_save[k] = v
+
+    all_strings = list(pairs_to_save.keys()) + list(pairs_to_save.values())
+    uids = get_or_insert_strings(self._db.conn, all_strings)
+
+    cursor.executemany(
+        "INSERT INTO mapping_pairs (mapping_id, source_string_uid,"
+        " target_string_uid) VALUES (?, ?, ?)",
+        [
+            (mapping_id, uids[src], uids[tgt])
+            for src, tgt in pairs_to_save.items()
+        ],
+    )
+    self._db.conn.commit()
+
+  def __delitem__(self, key: str) -> None:
+    cursor = self._db.conn.cursor()
+    cursor.execute("SELECT 1 FROM mappings WHERE name = ?", (key,))
+    if cursor.fetchone() is None:
+      raise KeyError(key)
+    cursor.execute("DELETE FROM mappings WHERE name = ?", (key,))
+    self._db.conn.commit()
+
+  def __iter__(self) -> typing.Iterator[str]:
+    cursor = self._db.conn.cursor()
+    cursor.execute("SELECT name FROM mappings")
+    return (r[0] for r in cursor.fetchall())
+
+  def __len__(self) -> int:
+    cursor = self._db.conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM mappings")
+    return cursor.fetchone()[0]
+
+  def __contains__(self, key: object) -> bool:
+    if not isinstance(key, str):
+      return False
+    cursor = self._db.conn.cursor()
+    cursor.execute("SELECT 1 FROM mappings WHERE name = ?", (key,))
+    return cursor.fetchone() is not None
+
+
 class TaxonomyDatabase:
-  namespaces: dict[str, namespace.Namespace]
-  class_lists: dict[str, namespace.ClassList]
-  mappings: dict[str, namespace.Mapping]
+  """The taxonomy database structure based on SQLite backend."""
+
+  def __init__(
+      self,
+      conn: sqlite3.Connection | dict[str, namespace.Namespace] | None = None,
+      class_lists: dict[str, namespace.ClassList] | None = None,
+      mappings: dict[str, namespace.Mapping] | None = None,
+  ):
+    if isinstance(conn, sqlite3.Connection):
+      self.conn = conn
+    else:
+      # If namespaces dictionary (or None) is passed as first argument,
+      # initialize with an in-memory SQLite connection!
+      self.conn = sqlite3.connect(":memory:", check_same_thread=False)
+      create_tables(self.conn)
+
+      self.namespaces = SQLiteNamespacesDict(self)
+      self.class_lists = SQLiteClassListsDict(self)
+      self.mappings = SQLiteMappingsDict(self)
+
+      if conn is not None:
+        for k, v in conn.items():
+          self.namespaces[k] = v
+      if class_lists is not None:
+        for k, v in class_lists.items():
+          self.class_lists[k] = v
+      if mappings is not None:
+        for k, v in mappings.items():
+          self.mappings[k] = v
+      return
+
+    self.namespaces = SQLiteNamespacesDict(self)
+    self.class_lists = SQLiteClassListsDict(self)
+    self.mappings = SQLiteMappingsDict(self)
 
 
 def validate_taxonomy_database(taxonomy_database: TaxonomyDatabase) -> None:
@@ -131,84 +688,148 @@ def validate_taxonomy_database(taxonomy_database: TaxonomyDatabase) -> None:
       )
 
 
-def load_taxonomy_database(
-    taxonomy_database: dict[str, typing.Any],
-) -> TaxonomyDatabase:
-  """Construct a taxonomy database from a dictionary.
-
-  Args:
-    taxonomy_database: The database as loaded from a JSON file.
-
-  Returns:
-    A taxonomy database.
-
-  Raises:
-    TypeError when the database contains unknown keys.
-  """
-  namespaces = {
-      name: namespace.Namespace(
-          classes=frozenset(namespace_.pop("classes")), **namespace_
-      )
-      for name, namespace_ in taxonomy_database.pop("namespaces").items()
-  }
-  class_lists = {
-      name: namespace.ClassList(
-          classes=tuple(class_list.pop("classes")), **class_list
-      )
-      for name, class_list in taxonomy_database.pop("class_lists").items()
-  }
-  mappings = {
-      name: namespace.Mapping(**mapping)
-      for name, mapping in taxonomy_database.pop("mappings").items()
-  }
-  return TaxonomyDatabase(
-      namespaces=namespaces,
-      class_lists=class_lists,
-      mappings=mappings,
-      **taxonomy_database,
-  )
-
-
-class TaxonomyDatabaseEncoder(json.JSONEncoder):
-
-  def default(self, o):
-    if isinstance(o, frozenset):
-      return sorted(o)
-    return super().default(o)
-
-
 def dump_db(taxonomy_database: TaxonomyDatabase, validate: bool = True) -> str:
+  """Serialize SQLite taxonomy database back to a JSON-formatted string."""
   if validate:
     validate_taxonomy_database(taxonomy_database)
+
+  data = {
+      "namespaces": {
+          name: {"classes": sorted(list(ns.classes))}
+          for name, ns in sorted(taxonomy_database.namespaces.items())
+      },
+      "class_lists": {
+          name: {"namespace": cl.namespace, "classes": list(cl.classes)}
+          for name, cl in sorted(taxonomy_database.class_lists.items())
+      },
+      "mappings": {
+          name: {
+              "source_namespace": m.source_namespace,
+              "target_namespace": m.target_namespace,
+              "default": m.default,
+              "mapped_pairs": {
+                  k: v
+                  for k, v in sorted(m.mapped_pairs.items())
+                  if not (
+                      k == v
+                      and k
+                      in (
+                          (  # pylint: disable=g-long-ternary
+                              taxonomy_database.namespaces[
+                                  m.source_namespace
+                              ].classes
+                              & taxonomy_database.namespaces[
+                                  m.target_namespace
+                              ].classes
+                          )
+                          if m.source_namespace in taxonomy_database.namespaces
+                          and m.target_namespace in taxonomy_database.namespaces
+                          else set()
+                      )
+                  )
+              },
+          }
+          for name, m in sorted(taxonomy_database.mappings.items())
+      },
+  }
   return json.dumps(
-      dataclasses.asdict(taxonomy_database),
-      cls=TaxonomyDatabaseEncoder,
+      data,
       indent=2,
       sort_keys=True,
   )
 
 
+_in_memory_dbs: dict[tuple[str, bool], TaxonomyDatabase] = {}
+
+
+def _resolve_db_path(path_str: str) -> str:
+  """Resolve the database path to an absolute path."""
+  try:
+    abs_path = path_utils.get_absolute_path(path_str)
+  except (ValueError, OSError):
+    abs_path = None
+
+  file_exists = os.path.exists(path_str)
+  resolved_path = path_str
+  if not file_exists and abs_path is not None:
+    try:
+      if os.path.exists(abs_path):
+        file_exists = True
+        resolved_path = str(abs_path)
+    except OSError:
+      pass
+
+  if not file_exists:
+    raise FileNotFoundError(f"Database file '{resolved_path}' not found.")
+  return resolved_path
+
+
 @functools.cache
-def load_db(
-    path: os.PathLike[str] | str = TAXONOMY_DATABASE_FILENAME,
-    validate: bool = True,
+def _load_db_cached(
+    path_str: str,
+    validate: bool,
+    read_only: bool,
 ) -> TaxonomyDatabase:
-  """Load the taxonomy database.
+  """Load the taxonomy database from an SQLite file, with caching."""
+  resolved_path = _resolve_db_path(path_str)
+  if read_only:
+    # Open in read-only mode using URI
+    abs_resolved_path = os.path.abspath(resolved_path)
+    conn = sqlite3.connect(
+        f"file:{abs_resolved_path}?mode=ro", uri=True, check_same_thread=False
+    )
+  else:
+    conn = sqlite3.connect(resolved_path, check_same_thread=False)
+    create_tables(conn)
+  taxonomy_database = TaxonomyDatabase(conn)
 
-  This loads the taxonomy database from the given JSON file. It converts the
-  database into Python data structures and optionally validates that the
-  database is consistent.
-
-  Args:
-    path: The JSON file to load.
-    validate: If true, it validates the database.
-
-  Returns:
-    The taxonomy database.
-  """
-  with path_utils.open_file(path, "r") as f:
-    data = json.load(f)
-  taxonomy_database = load_taxonomy_database(data)
   if validate:
     validate_taxonomy_database(taxonomy_database)
   return taxonomy_database
+
+
+def _load_in_memory(path_str: str, validate: bool) -> TaxonomyDatabase:
+  """Load the taxonomy database into an in-memory copy."""
+  resolved_path = _resolve_db_path(path_str)
+  abs_resolved_path = os.path.abspath(resolved_path)
+  source_conn = sqlite3.connect(
+      f"file:{abs_resolved_path}?mode=ro", uri=True, check_same_thread=False
+  )
+  conn = sqlite3.connect(":memory:", check_same_thread=False)
+  source_conn.backup(conn)
+  source_conn.close()
+
+  taxonomy_database = TaxonomyDatabase(conn)
+  if validate:
+    validate_taxonomy_database(taxonomy_database)
+  return taxonomy_database
+
+
+def load_db(
+    path: os.PathLike[str] | str = TAXONOMY_DATABASE_FILENAME,
+    validate: bool = True,
+    read_only: bool = True,
+    in_memory: bool = False,
+) -> TaxonomyDatabase:
+  """Load the taxonomy database.
+
+  This loads the taxonomy database from the given SQLite file.
+
+  Args:
+    path: The file to load.
+    validate: If true, it validates the database.
+    read_only: If true and loading an SQLite file, opens it in read-only mode.
+    in_memory: If true, loads the database into an in-memory copy.
+
+  Returns:
+    The taxonomy database.
+  Raises:
+    FileNotFoundError: if the database file does not exist.
+  """
+  path_str = str(path)
+  key_in_mem = (path_str, validate)
+  if in_memory or key_in_mem in _in_memory_dbs:
+    if key_in_mem not in _in_memory_dbs:
+      _in_memory_dbs[key_in_mem] = _load_in_memory(path_str, validate)
+    return _in_memory_dbs[key_in_mem]
+  return _load_db_cached(path_str, validate, read_only)

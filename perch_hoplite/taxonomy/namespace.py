@@ -19,7 +19,7 @@ from __future__ import annotations
 import csv
 import dataclasses
 import io
-from typing import Iterable
+from typing import Any, Iterable
 
 import numpy as np
 
@@ -43,11 +43,39 @@ class Namespace:
       raise ValueError("unknown class")
 
   def __str__(self):
+    if not self.classes:
+      return "Empty Namespace"
     example_class = sorted(list(self.classes))[0]
     return (
         f"Namespace with {len(self.classes)} classes, "
         f"including '{example_class}'"
     )
+
+  def __add__(
+      self, other: Namespace | frozenset[str] | set[str] | Iterable[str]
+  ) -> Any:
+    if isinstance(other, Namespace):
+      other_classes = other.classes
+    elif isinstance(other, (frozenset, set)):
+      other_classes = other
+    elif isinstance(other, Iterable) and not isinstance(other, str):
+      other_classes = frozenset(other)
+    else:
+      return NotImplemented
+    return Namespace(classes=self.classes.union(other_classes))
+
+  def __sub__(
+      self, other: Namespace | frozenset[str] | set[str] | Iterable[str]
+  ) -> Any:
+    if isinstance(other, Namespace):
+      other_classes = other.classes
+    elif isinstance(other, (frozenset, set)):
+      other_classes = other
+    elif isinstance(other, Iterable) and not isinstance(other, str):
+      other_classes = frozenset(other)
+    else:
+      return NotImplemented
+    return Namespace(classes=self.classes.difference(other_classes))
 
 
 @dataclasses.dataclass
@@ -72,11 +100,15 @@ class Mapping:
     target_namespace: The name of the target namespace.
     mapped_pairs: The mapping from labels in the source namespace to labels in
       the target namespace.
+    default: If true, then the mapping acts as an identity mapping for all
+      classes in the source namespace that are not in the mapping. This behavior
+      is overridden by explicit pairings in the mapping.
   """
 
   source_namespace: str
   target_namespace: str
   mapped_pairs: dict[str, str]
+  default: bool = False
 
   def __post_init__(self):
     if UNKNOWN_LABEL in self.mapped_pairs.values():
@@ -93,6 +125,7 @@ class Mapping:
         source_namespace=self.target_namespace,
         target_namespace=self.source_namespace,
         mapped_pairs={v: k for k, v in self.mapped_pairs.items()},
+        default=self.default,
     )
 
 

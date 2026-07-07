@@ -20,6 +20,7 @@ from __future__ import annotations
 import dataclasses
 from typing import Any
 
+from absl import logging
 import kagglehub
 from ml_collections import config_dict
 import numpy as np
@@ -72,8 +73,17 @@ class TaxonomyModelOnnx(zoo_interface.EmbeddingModel):
     if not self.model_path:
       raise ValueError('TaxonomyModelOnnx requires a local model_path.')
     ort = _require_onnxruntime()
+    available = ort.get_available_providers()
+    if 'CUDAExecutionProvider' in available:
+      providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+      logging.info('PerchONNX: CUDA provider detected -- using GPU')
+    else:
+      providers = ['CPUExecutionProvider']
+      logging.info('PerchONNX: No GPU found -- using CPU')
+    opts = ort.SessionOptions()
+    opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
     self._session = ort.InferenceSession(
-        self.model_path, providers=['CPUExecutionProvider']
+        self.model_path, sess_options=opts, providers=providers
     )
     self._available = {o.name for o in self._session.get_outputs()}
 

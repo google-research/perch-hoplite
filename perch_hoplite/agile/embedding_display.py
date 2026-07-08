@@ -56,11 +56,11 @@ class QueryDisplay:
   def update_spectrogram(self):
     """Update the spectrogram for this query."""
     if self.full_spectrogram is None:
-      self.full_spectrogram = get_melspec_layer(self.sample_rate_hz)(self.audio)
+      self.full_spectrogram = get_melspec_layer(self.sample_rate_hz)(self.audio)  # pyrefly: ignore[bad-argument-type]
     start = int(self.offset_s * self.sample_rate_hz)
     end = int(start + self.window_size_s * self.sample_rate_hz)
     self.window_spectrogram = get_melspec_layer(self.sample_rate_hz)(
-        self.audio[start:end]
+        self.audio[start:end]  # pyrefly: ignore[unsupported-operation]
     )
 
   def get_audio_window(self) -> np.ndarray | None:
@@ -121,7 +121,7 @@ class QueryDisplay:
       ipy_display(IPython.display.Audio(self.audio, rate=self.sample_rate_hz))
     window_st = int(self.offset_s * self.sample_rate_hz)
     window_end = int(window_st + self.window_size_s * self.sample_rate_hz)
-    audio_window = self.audio[window_st:window_end]
+    audio_window = self.audio[window_st:window_end]  # pyrefly: ignore[unsupported-operation]
     ipy_display(IPython.display.Audio(audio_window, rate=self.sample_rate_hz))
 
   def display_interactive(self):
@@ -372,7 +372,7 @@ class EmbeddingDisplayGroup:
       window_id = int(result.window_id)
       window = db.get_window(window_id)
       recording = db.get_recording(window.recording_id)
-      deployment = db.get_deployment(recording.deployment_id)
+      deployment = db.get_deployment(recording.deployment_id)  # pyrefly: ignore[bad-argument-type]
       annotations = db.get_all_annotations(
           filter=config_dict.create(
               eq=dict(recording_id=window.recording_id),

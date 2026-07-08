@@ -72,8 +72,8 @@ def make_mix_embeddings(
   major_axis /= np.linalg.norm(major_axis)
   pos_mu = major_axis * mu_diff / 2
   neg_mu = major_axis * -mu_diff / 2
-  pos_sigma = np.eye(embedding_dim) * pos_sigma
-  neg_sigma = np.eye(embedding_dim) * neg_sigma
+  pos_sigma = np.eye(embedding_dim) * pos_sigma  # pyrefly: ignore[bad-assignment]
+  neg_sigma = np.eye(embedding_dim) * neg_sigma  # pyrefly: ignore[bad-assignment]
   pos_data = rng.multivariate_normal(pos_mu, pos_sigma, size=int(n * pos_pi))
   neg_data = rng.multivariate_normal(
       neg_mu, neg_sigma, size=n - pos_data.shape[0]

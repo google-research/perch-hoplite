@@ -68,7 +68,7 @@ class InferenceOutputs:
   ) -> np.ndarray:
     """Reduce embeddings over the time and/or channel axis."""
     # Shape is either [B, F, C, D] or [F, C, D], so the time axis is -3.
-    outputs = pool_axis(self.embeddings, -3, time_pooling)
+    outputs = pool_axis(self.embeddings, -3, time_pooling)  # pyrefly: ignore[bad-argument-type]
     outputs = pool_axis(outputs, -2, channel_pooling)
     return outputs
 
@@ -207,10 +207,10 @@ class LogitsOutputHead:
     model_path = epath.Path(config.model_path)
     with (model_path / 'class_list.csv').open('r') as f:
       class_list = namespace.ClassList.from_csv(f)
-    return cls(
+    return cls(  # pyrefly: ignore[missing-argument]
         logits_model=logits_model,
         class_list=class_list,
-        **config,
+        **config,  # pyrefly: ignore[bad-unpacking]
     )
 
   def __call__(self, embeddings: np.ndarray) -> InferenceOutputs:
@@ -227,7 +227,7 @@ class LogitsOutputHead:
         logits = logits.numpy()
     else:
       raise ValueError('could not figure out how to call wrapped model.')
-    return logits
+    return logits  # pyrefly: ignore[bad-return]
 
   def save_model(self, output_path: str, embeddings_path: str):
     """Write a SavedModel and metadata to disk."""
@@ -238,21 +238,21 @@ class LogitsOutputHead:
       tf.saved_model.save(self.logits_model, output_path)
     else:
       raise ValueError(f'Unknown model type: {self.model_type}')
-    output_path = epath.Path(output_path)
+    output_path = epath.Path(output_path)  # pyrefly: ignore[bad-assignment]
     # Write a config file.
     config_data = dataclasses.asdict(self)
     for k in ['logits_model', 'class_list']:
       # These are loaded automatically.
       config_data.pop(k)
-    with (output_path / 'logits_config.json').open('w') as f:
+    with (output_path / 'logits_config.json').open('w') as f:  # pyrefly: ignore[unsupported-operation]
       json.dump(config_data, f)
     # Copy the embeddings_config if provided
     if embeddings_path:
       (epath.Path(embeddings_path) / 'config.json').copy(
-          output_path / 'embeddings_config.json', overwrite=True
+          output_path / 'embeddings_config.json', overwrite=True  # pyrefly: ignore[unsupported-operation]
       )
     # Write the class list.
-    with (output_path / 'class_list.csv').open('w') as f:
+    with (output_path / 'class_list.csv').open('w') as f:  # pyrefly: ignore[unsupported-operation]
       f.write(self.class_list.to_csv())
 
   def add_logits(self, model_outputs: InferenceOutputs, keep_original: bool):
@@ -264,9 +264,9 @@ class LogitsOutputHead:
     flat_embeddings = np.reshape(embeddings, [-1, embeddings.shape[-1]])
     flat_logits = self(flat_embeddings)
     logits_shape = np.concatenate(
-        [np.shape(embeddings)[:-1], np.shape(flat_logits)[-1:]], axis=0
+        [np.shape(embeddings)[:-1], np.shape(flat_logits)[-1:]], axis=0  # pyrefly: ignore[no-matching-overload]
     )
-    logits = np.reshape(flat_logits, logits_shape)
+    logits = np.reshape(flat_logits, logits_shape)  # pyrefly: ignore[no-matching-overload]
     # Embeddings have shape [B, T, C, D] or [T, C, D], so our logits also
     # have a channel dimension.
     # Output logits should have shape [B, T, D] or [T, D], so we reduce the

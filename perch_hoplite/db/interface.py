@@ -387,7 +387,7 @@ class HopliteDBInterface(abc.ABC):
 
     # Insert the windows one by one, in the order they are given.
     window_ids = []
-    for window_kwargs, embedding in zip(windows_batch, embeddings_batch):
+    for window_kwargs, embedding in zip(windows_batch, embeddings_batch):  # pyrefly: ignore[bad-argument-type]
       window_id = self.insert_window(
           embedding=embedding,
           handle_duplicates=handle_duplicates,

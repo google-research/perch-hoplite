@@ -72,7 +72,7 @@ class PresetInfo:
 
   def load_model(self) -> zoo_interface.EmbeddingModel:
     """Loads the embedding model."""
-    cfg = config_dict.ConfigDict(self.model_config)
+    cfg = config_dict.ConfigDict(self.model_config)  # pyrefly: ignore[bad-argument-type]
     if self.resolve_fn is not None:
       self.resolve_fn(cfg)
     return get_model_class(self.model_key).from_config(cfg)

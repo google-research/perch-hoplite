@@ -120,9 +120,9 @@ def hinge_loss(
 ) -> tf.Tensor:
   """Weighted SVM hinge loss."""
   # Convert multihot to +/- 1 labels.
-  y_true = 2 * y_true - 1
-  weights = (1.0 - is_labeled_mask) * weak_neg_weight + is_labeled_mask
-  raw_hinge_loss = tf.maximum(0, 1 - y_true * logits)
+  y_true = 2 * y_true - 1  # pyrefly: ignore[bad-assignment, unsupported-operation]
+  weights = (1.0 - is_labeled_mask) * weak_neg_weight + is_labeled_mask  # pyrefly: ignore[unsupported-operation]
+  raw_hinge_loss = tf.maximum(0, 1 - y_true * logits)  # pyrefly: ignore[unsupported-operation]
   return tf.reduce_mean(raw_hinge_loss * weights)
 
 
@@ -165,7 +165,7 @@ def eval_classifier(
   cmaps = metrics.cmap(
       logits=pred_logits, labels=true_labels, sample_threshold=1
   )
-  return {
+  return {  # pyrefly: ignore[bad-return]
       'top1_acc': top1,
       'roc_auc': rocs['macro'],
       'roc_auc_individual': rocs['individual'],
@@ -200,7 +200,7 @@ def train_linear_classifier(
   @tf.function
   def train_step(y_true, embeddings, is_labeled_mask):
     with tf.GradientTape() as tape:
-      logits = lin_model(embeddings, training=True)
+      logits = lin_model(embeddings, training=True)  # pyrefly: ignore[not-callable]
       loss = loss_fn(y_true, logits, is_labeled_mask, weak_neg_weight)
       loss = tf.reduce_mean(loss)
     grads = tape.gradient(loss, lin_model.trainable_variables)
@@ -287,7 +287,7 @@ def csv_worker_fn(
     for idx, logit in zip(window_ids, logits):
       window = db.get_window(idx)
       recording = db.get_recording(window.recording_id)
-      deployment = db.get_deployment(recording.deployment_id)
+      deployment = db.get_deployment(recording.deployment_id)  # pyrefly: ignore[bad-argument-type]
       for a in np.argwhere(logit > state.threshold):
         lbl = state.labels[a[0]]
         row = [
@@ -311,7 +311,7 @@ def batched_embedding_iterator(
   """Iterate over embeddings in batches."""
   for q in range(0, len(window_ids), batch_size):
     batch_ids = window_ids[q : q + batch_size]
-    batch_embs = db.get_embeddings_batch(batch_ids)
+    batch_embs = db.get_embeddings_batch(batch_ids)  # pyrefly: ignore[bad-argument-type]
     yield batch_ids, batch_embs
 
 

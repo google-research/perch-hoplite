@@ -128,7 +128,7 @@ def brute_search(
     id_batch = ids[i : i + batch_size]
     target_embeddings = db.get_embeddings_batch(id_batch)
     scores = score_fn(target_embeddings, query_embedding)
-    for idx, score in zip(id_batch, scores):
+    for idx, score in zip(id_batch, scores):  # pyrefly: ignore[bad-argument-type]
       # Check filtering and then force insert to avoid creating a SearchResult
       # object for discarded objects. This saves a small amount of time in the
       # inner loop.

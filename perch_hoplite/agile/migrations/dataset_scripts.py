@@ -32,8 +32,8 @@ def convert_wabad_data(
     metadata_csv_path: Path to the WABAD metadata CSV file.
     output_dir: Directory to write hoplite_* files to.
   """
-  output_dir = epath.Path(output_dir)
-  output_dir.mkdir(parents=True, exist_ok=True)
+  output_dir = epath.Path(output_dir)  # pyrefly: ignore[bad-assignment]
+  output_dir.mkdir(parents=True, exist_ok=True)  # pyrefly: ignore[missing-attribute]
 
   print(f'Reading WABAD annotations data from {annotations_csv_path}...')
   # Read CSV with comma separator and dot decimal.
@@ -53,7 +53,7 @@ def convert_wabad_data(
       'end_offset_s': df['End_Time_(s)'],
       'label_type': 'positive',
   })
-  annotations_df.to_csv(output_dir / 'hoplite_annotations.csv', index=False)
+  annotations_df.to_csv(output_dir / 'hoplite_annotations.csv', index=False)  # pyrefly: ignore[unsupported-operation]
 
   # 2. Create hoplite_deployments_metadata.csv
   print(f'Reading WABAD metadata from {metadata_csv_path}...')
@@ -79,7 +79,7 @@ def convert_wabad_data(
       subset=['deployment']
   ).reset_index(drop=True)
   deployment_df.to_csv(
-      output_dir / 'hoplite_deployments_metadata.csv', index=False
+      output_dir / 'hoplite_deployments_metadata.csv', index=False  # pyrefly: ignore[unsupported-operation]
   )
 
   # 3. Create hoplite_metadata_description.csv
@@ -92,7 +92,7 @@ def convert_wabad_data(
       'lat,deployment,float,"Latitude of recording site"\n'
       'lon,deployment,float,"Longitude of recording site"\n'
   )
-  (output_dir / 'hoplite_metadata_description.csv').write_text(
+  (output_dir / 'hoplite_metadata_description.csv').write_text(  # pyrefly: ignore[unsupported-operation]
       description_content
   )
 

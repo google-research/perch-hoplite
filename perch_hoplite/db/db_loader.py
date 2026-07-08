@@ -41,9 +41,9 @@ class DBConfig(datatypes.HopliteConfig):
   def load_db(self) -> interface.HopliteDBInterface:
     """Load the database from the specified path."""
     if self.db_key == 'sqlite_usearch':
-      return sqlite_usearch_impl.SQLiteUSearchDB.create(**self.db_config)
+      return sqlite_usearch_impl.SQLiteUSearchDB.create(**self.db_config)  # pyrefly: ignore[bad-unpacking, missing-argument]
     elif self.db_key == 'in_mem':
-      return in_mem_impl.InMemoryGraphSearchDB.create(**self.db_config)
+      return in_mem_impl.InMemoryGraphSearchDB.create(**self.db_config)  # pyrefly: ignore[bad-unpacking, missing-argument]
     else:
       raise ValueError(f'Unknown db_key: {self.db_key}')
 
@@ -66,7 +66,7 @@ def duplicate_db(
   deployment_id_mapping = {None: None}
   for deployment in tqdm.tqdm(source_db.get_all_deployments()):
     target_id = target_db.insert_deployment(**deployment.to_kwargs(skip=['id']))
-    deployment_id_mapping[deployment.id] = target_id
+    deployment_id_mapping[deployment.id] = target_id  # pyrefly: ignore[unsupported-operation]
   target_db.commit()
 
   # Clone recordings and keep a map between source and target ids.

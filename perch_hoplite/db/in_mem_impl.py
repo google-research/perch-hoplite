@@ -69,7 +69,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
   _next_annotation_id: int = 1
 
   @classmethod
-  def create(
+  def create(  # pyrefly: ignore[bad-override]
       cls,
       embedding_dim: int,
       embedding_dtype: type[Any] = np.float16,
@@ -272,7 +272,7 @@ class InMemoryGraphSearchDB(interface.HopliteDBInterface):
   def get_embedding(self, window_id: int) -> np.ndarray:
     """Get an embedding vector from the database."""
     window_id = int(window_id)
-    return self._windows[window_id].embedding
+    return self._windows[window_id].embedding  # pyrefly: ignore[bad-return]
 
   def remove_window(self, window_id: int) -> None:
     """Remove a window from the database."""

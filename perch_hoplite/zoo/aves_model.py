@@ -74,15 +74,15 @@ def onnx_instancenormalization(*input_args, epsilon: float):
 
 def cache_onnx_model(url: str) -> str:
   """Cache the ONNX model at a local path."""
-  url = epath.Path(url)
-  filename = url.name
+  url = epath.Path(url)  # pyrefly: ignore[bad-assignment]
+  filename = url.name  # pyrefly: ignore[missing-attribute]
   # Check for existing file first.
   tempdir = tempfile.gettempdir()
   cached_model_path = epath.Path(tempdir) / filename
   if cached_model_path.exists():
     return cached_model_path.as_posix()
   # Download the model and cache it.
-  url.copy(cached_model_path)
+  url.copy(cached_model_path)  # pyrefly: ignore[missing-attribute]
   return cached_model_path.as_posix()
 
 
@@ -98,7 +98,7 @@ class AVES(zoo_interface.EmbeddingModel):
   """
 
   model_path: str = ''
-  model: onnx.onnx_ml_pb2.ModelProto = dataclasses.field(init=False)
+  model: onnx.onnx_ml_pb2.ModelProto = dataclasses.field(init=False)  # pyrefly: ignore[missing-attribute]
   input_shape: tuple[int, ...] | None = dataclasses.field(
       default=None, init=False
   )
@@ -110,13 +110,13 @@ class AVES(zoo_interface.EmbeddingModel):
   def from_config(
       cls, model_config: config_dict.ConfigDict
   ) -> zoo_interface.EmbeddingModel:
-    return cls(**model_config)
+    return cls(**model_config)  # pyrefly: ignore[bad-unpacking, missing-argument]
 
   def __post_init__(self):
     jaxonnxruntime.config.update(
         'jaxort_only_allow_initializers_as_static_args', False
     )
-    self.model = onnx.load(self.model_path)
+    self.model = onnx.load(self.model_path)  # pyrefly: ignore[missing-attribute]
 
   def embed(
       self, audio_array: np.ndarray[Any, Any]
@@ -139,6 +139,6 @@ class AVES(zoo_interface.EmbeddingModel):
       self.model_func = functools.partial(model_func, model_params)
 
     # Embed and add a single channel dimension
-    embeddings = np.asarray(self.model_func([audio_batch])[0])
+    embeddings = np.asarray(self.model_func([audio_batch])[0])  # pyrefly: ignore[not-callable]
     embeddings = embeddings[:, :, np.newaxis, :]
     return zoo_interface.InferenceOutputs(embeddings=embeddings, batched=True)

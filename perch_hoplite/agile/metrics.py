@@ -193,19 +193,19 @@ def generalized_mean_rank(
     idx = np.flip(idx, axis=-1)
   labels = np.take_along_axis(labels, idx, axis=-1)
   if label_mask is None:
-    label_mask = True
+    label_mask = True  # pyrefly: ignore[bad-assignment]
   else:
     label_mask = np.take_along_axis(label_mask, idx, axis=-1)
 
-  num_p = (labels > 0).sum(axis=-1, where=label_mask)
+  num_p = (labels > 0).sum(axis=-1, where=label_mask)  # pyrefly: ignore[no-matching-overload]
   # Prevent divsion by zero is num_p is zero.
   num_p = np.maximum(num_p, 1)
-  num_p_above = np.cumsum((labels > 0) & label_mask, axis=-1)
+  num_p_above = np.cumsum((labels > 0) & label_mask, axis=-1)  # pyrefly: ignore[unsupported-operation]
   num_n = (labels == 0).sum(axis=-1, where=label_mask)
   num_n_above = np.cumsum((labels == 0) & label_mask, axis=-1)
 
   gmr = num_p_above.mean(axis=-1, where=(labels == 0) & label_mask) / num_p
   gmr_var = (num_n_above / num_n[:, None]).var(
-      axis=-1, where=(labels > 0) & label_mask
+      axis=-1, where=(labels > 0) & label_mask  # pyrefly: ignore[unsupported-operation]
   )
   return gmr, gmr_var

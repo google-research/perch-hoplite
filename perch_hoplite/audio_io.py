@@ -57,7 +57,7 @@ def load_audio_file(
   filepath = epath.Path(filepath)
   if target_sample_rate <= 0:
     # Use the native sample rate.
-    target_sample_rate = None
+    target_sample_rate = None  # pyrefly: ignore[bad-assignment]
   if expect_soundfile_compatibility(filepath):
     with filepath.open('rb') as f:
       sf = soundfile.SoundFile(file=f)

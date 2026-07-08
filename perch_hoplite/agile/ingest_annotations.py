@@ -114,7 +114,7 @@ PRESETS: dict[str, AnnotatedDatasetIngestor] = {
         dataset_name='anuraset',
         audio_glob='raw_data/*/*.wav',
         annotation_filename='annotations.csv',
-        annotation_load_fn=annotations_fns.load_anuraset_annotations,
+        annotation_load_fn=annotations_fns.load_anuraset_annotations,  # pyrefly: ignore[bad-argument-type]
     ),
     'coffee_farms': AnnotatedDatasetIngestor(
         base_path=BASE_PATH / 'coffee_farms',
@@ -149,7 +149,7 @@ PRESETS: dict[str, AnnotatedDatasetIngestor] = {
         audio_glob='*/*.wav',
         dataset_name='powdermill',
         annotation_filename='powdermill.csv',
-        annotation_load_fn=annotations_fns.load_powdermill_annotations,
+        annotation_load_fn=annotations_fns.load_powdermill_annotations,  # pyrefly: ignore[bad-argument-type]
     ),
     'sierras_kahl': AnnotatedDatasetIngestor(
         base_path=BASE_PATH / 'sierras_kahl',
@@ -170,7 +170,7 @@ PRESETS: dict[str, AnnotatedDatasetIngestor] = {
         dataset_name='weldy_calltype',
         audio_glob='annotated_recordings/*.wav',
         annotation_filename='annotations.csv',
-        annotation_load_fn=annotations_fns.load_weldy_annotations,
+        annotation_load_fn=annotations_fns.load_weldy_annotations,  # pyrefly: ignore[bad-argument-type]
     ),
 }
 

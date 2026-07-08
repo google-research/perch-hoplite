@@ -47,7 +47,7 @@ class HandcraftedFeaturesModel(zoo_interface.EmbeddingModel):
   def from_config(
       cls, config: config_dict.ConfigDict
   ) -> 'HandcraftedFeaturesModel':
-    return cls(**config)
+    return cls(**config)  # pyrefly: ignore[bad-unpacking, missing-argument]
 
   @classmethod
   def beans_baseline_config(

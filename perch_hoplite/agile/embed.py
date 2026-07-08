@@ -572,15 +572,15 @@ class EmbedWorker:
 
     # Add deployments and recordings to the database.
     print('\nAdding deployments...')
-    self.add_deployments(target_dataset_name, handle_duplicates)
+    self.add_deployments(target_dataset_name, handle_duplicates)  # pyrefly: ignore[bad-argument-type]
     print('\nAdding recordings...')
-    new_recordings = self.add_recordings(target_dataset_name, handle_duplicates)
+    new_recordings = self.add_recordings(target_dataset_name, handle_duplicates)  # pyrefly: ignore[bad-argument-type]
     print('\nAdding annotations...')
-    self.add_annotations(handle_duplicates=handle_duplicates)
+    self.add_annotations(handle_duplicates=handle_duplicates)  # pyrefly: ignore[bad-argument-type]
     print('\nEmbedding audio...')
     self.embed_dataset(
         batch_size=batch_size,
-        handle_duplicates=handle_duplicates,
+        handle_duplicates=handle_duplicates,  # pyrefly: ignore[bad-argument-type]
         target_dataset_name=target_dataset_name,
         new_recordings=new_recordings,
     )

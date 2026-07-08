@@ -182,8 +182,8 @@ class TaxonomyModelTF(zoo_interface.EmbeddingModel):
 
     # Check whether the model support polymorphic batch shape.
     batchable = cls.is_batchable(model)
-    return cls(
-        model=model, class_list=class_lists, batchable=batchable, **config
+    return cls(  # pyrefly: ignore[missing-argument]
+        model=model, class_list=class_lists, batchable=batchable, **config  # pyrefly: ignore[bad-unpacking]
     )
 
   def get_classifier_head(self, classes: list[str]):

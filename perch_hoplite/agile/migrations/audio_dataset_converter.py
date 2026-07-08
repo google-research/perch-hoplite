@@ -87,7 +87,7 @@ class AudioDatasetIngestor:
     elif embedding_dim is None:
       embedding_dim = preset_info.embedding_dim
     db = db_loader.create_new_usearch_db(
-        db_path=output_path, embedding_dim=embedding_dim
+        db_path=output_path, embedding_dim=embedding_dim  # pyrefly: ignore[bad-argument-type]
     )
     print('Initialized DB located at ', output_path)
     worker = embed.EmbedWorker(

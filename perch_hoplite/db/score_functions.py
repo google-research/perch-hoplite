@@ -59,7 +59,7 @@ def get_score_fn(
   else:
     targeted_fn = bias_fn
 
-  return targeted_fn
+  return targeted_fn  # pyrefly: ignore[bad-return]
 
 
 def numpy_dot(data: np.ndarray, query: np.ndarray) -> float | np.ndarray:

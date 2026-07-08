@@ -253,7 +253,7 @@ class AgileDataManager(DataManager):
     all_train = np.setdiff1d(all_ids, all_eval)
     return all_train, all_eval
 
-  def batched_example_iterator(
+  def batched_example_iterator(  # pyrefly: ignore[bad-override]
       self,
       labeled_ids: np.ndarray,
       repeat: bool = False,

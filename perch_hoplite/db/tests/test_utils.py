@@ -76,7 +76,7 @@ def make_db(
     raise ValueError(f'Unknown db type: {db_type}')
   # Insert a few embeddings...
   if fill_random:
-    insert_random_embeddings(db, embedding_dim, num_embeddings, rng)
+    insert_random_embeddings(db, embedding_dim, num_embeddings, rng)  # pyrefly: ignore[bad-argument-type]
   config = config_dict.ConfigDict()
   config.embedding_dim = embedding_dim
   model_config = config_dict.ConfigDict()
@@ -130,7 +130,7 @@ def insert_random_embeddings(
     offsets = rng.integers(0, 100, size=[1])
     offsets = [offsets[0], offsets[0] + window_size_s]
     db.insert_window(
-        recording_id, offsets, embedding, handle_duplicates='allow'
+        recording_id, offsets, embedding, handle_duplicates='allow'  # pyrefly: ignore[bad-argument-type]
     )
   db.commit()
 
@@ -148,13 +148,13 @@ def clone_embeddings(
     if isinstance(target_db, multi_db_impl.MultiDBWrapper):
       target_db.get_dbs()[0].insert_deployment(**kwargs)
     target_id = target_db.insert_deployment(**kwargs)
-    deployment_id_mapping[deployment.id] = target_id
+    deployment_id_mapping[deployment.id] = target_id  # pyrefly: ignore[unsupported-operation]
 
   # Second, clone recordings and keep a map between source and target ids.
   recording_id_mapping = {}
   for recording in source_db.get_all_recordings():
     target_id = target_db.insert_recording(
-        deployment_id=deployment_id_mapping[recording.deployment_id],
+        deployment_id=deployment_id_mapping[recording.deployment_id],  # pyrefly: ignore[bad-index]
         **recording.to_kwargs(skip=['id', 'deployment_id']),
     )
     recording_id_mapping[recording.id] = target_id

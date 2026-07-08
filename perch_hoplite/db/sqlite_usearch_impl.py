@@ -525,7 +525,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     )
 
   @classmethod
-  def create(
+  def create(  # pyrefly: ignore[bad-override]
       cls,
       db_path: str,
       usearch_cfg: config_dict.ConfigDict | None = None,
@@ -550,10 +550,10 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     """
 
     # Create the SQLite DB.
-    db_path = epath.Path(db_path)
+    db_path = epath.Path(db_path)  # pyrefly: ignore[bad-assignment]
     if not readonly:
-      db_path.mkdir(parents=True, exist_ok=True)
-    sqlite_path = db_path / HOPLITE_FILENAME
+      db_path.mkdir(parents=True, exist_ok=True)  # pyrefly: ignore[missing-attribute]
+    sqlite_path = db_path / HOPLITE_FILENAME  # pyrefly: ignore[unsupported-operation]
 
     if readonly:
       db = sqlite3.connect(
@@ -616,7 +616,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
     # Create the USearch index.
     usearch_dtype = USEARCH_DTYPES[usearch_cfg.dtype]
-    index_path = db_path / UINDEX_FILENAME
+    index_path = db_path / UINDEX_FILENAME  # pyrefly: ignore[unsupported-operation]
     if index_path.exists():
       ui = uindex.Index(
           ndim=usearch_cfg.embedding_dim,
@@ -640,7 +640,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
     # Create the Hoplite DB.
     hoplite_db = cls(
-        db_path=db_path,
+        db_path=db_path,  # pyrefly: ignore[bad-argument-type]
         db=db,
         ui=ui,
         _embedding_dim=usearch_cfg.embedding_dim,
@@ -978,7 +978,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     columns = [col[0] for col in cursor.description]
     recording = datatypes.Recording(**dict(zip(columns, result)))
     if recording.datetime is not None:
-      recording.datetime = dt.datetime.fromisoformat(recording.datetime)
+      recording.datetime = dt.datetime.fromisoformat(recording.datetime)  # pyrefly: ignore[bad-argument-type]
     return recording
 
   def remove_recording(self, recording_id: int) -> None:
@@ -1215,7 +1215,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     params = [window.recording_id, w_end, w_start]
     if label is not None:
       query += ' AND label = ?'
-      params.append(label)
+      params.append(label)  # pyrefly: ignore[bad-argument-type]
     cursor.execute(query, params)
     annotations = []
     columns = [col[0] for col in cursor.description]
@@ -1265,7 +1265,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       )
     embeddings_batch = self.ui.get(window_ids)
     if isinstance(embeddings_batch, (tuple, list)):
-      embeddings_batch = np.stack(embeddings_batch)
+      embeddings_batch = np.stack(embeddings_batch)  # pyrefly: ignore[no-matching-overload]
     if not isinstance(embeddings_batch, np.ndarray):
       raise RuntimeError(
           'Expected np.ndarray result from the USearch `get()` method, but got'
@@ -1344,7 +1344,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     annotation_id = cursor.lastrowid
     if annotation_id is None:
       raise RuntimeError('Error inserting the annotation into the database.')
-    return cursor.lastrowid
+    return cursor.lastrowid  # pyrefly: ignore[bad-return]
 
   def get_annotation(self, annotation_id: int) -> datatypes.Annotation:
     """Get an annotation from the database."""
@@ -1487,7 +1487,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     for result in cursor.fetchall():
       recording = datatypes.Recording(**dict(zip(columns, result)))
       if recording.datetime is not None:
-        recording.datetime = dt.datetime.fromisoformat(recording.datetime)
+        recording.datetime = dt.datetime.fromisoformat(recording.datetime)  # pyrefly: ignore[bad-argument-type]
       recordings.append(recording)
     return recordings
 

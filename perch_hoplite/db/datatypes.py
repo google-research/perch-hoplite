@@ -275,4 +275,4 @@ class HopliteConfig:
   @classmethod
   def from_config_dict(cls, config: config_dict.ConfigDict) -> "HopliteConfig":
     """Convert from a ConfigDict."""
-    return cls(**config)
+    return cls(**config)  # pyrefly: ignore[bad-unpacking]

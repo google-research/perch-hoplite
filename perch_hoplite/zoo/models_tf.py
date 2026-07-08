@@ -61,10 +61,10 @@ class SeparateEmbedModel(zoo_interface.EmbeddingModel):
     embedding_model = taxonomy_model_tf.TaxonomyModelTF.from_config(
         config.taxonomy_model_tf_config
     )
-    return cls(
+    return cls(  # pyrefly: ignore[missing-argument]
         separation_model=separation_model,
         embedding_model=embedding_model,
-        **config,
+        **config,  # pyrefly: ignore[bad-unpacking]
     )
 
   def __post_init__(self):
@@ -165,7 +165,7 @@ class BirbSepModelTF1(zoo_interface.EmbeddingModel):
       ckpt = ckpt.as_posix()[: -len('.index')]
     if ckpt is None:
       raise FileNotFoundError('Could not find checkpoint file.')
-    return ckpt
+    return ckpt  # pyrefly: ignore[bad-return]
 
   @classmethod
   def from_config(cls, config: config_dict.ConfigDict) -> 'BirbSepModelTF1':
@@ -182,11 +182,11 @@ class BirbSepModelTF1(zoo_interface.EmbeddingModel):
       )
       output_tensor_ns = graph_ns.get_tensor_by_name('denoised_waveforms:0')
     session = sess_ns
-    return cls(
+    return cls(  # pyrefly: ignore[missing-argument]
         session=session,
         input_placeholder_ns=input_placeholder_ns,
         output_tensor_ns=output_tensor_ns,
-        **config,
+        **config,  # pyrefly: ignore[bad-unpacking]
     )
 
   def embed(self, audio_array: Any) -> zoo_interface.InferenceOutputs:
@@ -249,7 +249,7 @@ class SeparatorModelTF(zoo_interface.EmbeddingModel):
     label_csv_path = epath.Path(config.model_path) / 'label.csv'
     with label_csv_path.open('r') as f:
       class_list = namespace.ClassList.from_csv(f)
-    return cls(model=model, class_list=class_list, **config)
+    return cls(model=model, class_list=class_list, **config)  # pyrefly: ignore[bad-unpacking, missing-argument]
 
   def embed(self, audio_array: np.ndarray) -> zoo_interface.InferenceOutputs:
     # Drop samples to allow reshaping to frame_size
@@ -257,7 +257,7 @@ class SeparatorModelTF(zoo_interface.EmbeddingModel):
     if excess_samples > 0:
       audio_array = audio_array[:-excess_samples]
     framed_audio = self.frame_audio(
-        audio_array, self.window_size_s, self.window_size_s
+        audio_array, self.window_size_s, self.window_size_s  # pyrefly: ignore[bad-argument-type]
     )
     framed_audio = np.reshape(
         framed_audio,
@@ -337,11 +337,11 @@ class BirdNet(zoo_interface.EmbeddingModel):
 
     if config.class_list_name == 'birdnet_v2_1':
       class_list = db.class_lists[config.class_list_name]
-      return cls(
+      return cls(  # pyrefly: ignore[missing-argument]
           model=model,
           tflite=tflite,
           class_list=class_list,
-          **config,
+          **config,  # pyrefly: ignore[bad-unpacking]
       )
     elif config.class_list_name == 'birdnet_v2_4':
       # This assumes that the  v2.4 labels are stored in a text file in the same
@@ -358,11 +358,11 @@ class BirdNet(zoo_interface.EmbeddingModel):
         )
       with label_csv_path.open('r') as f:
         class_list = namespace.ClassList.from_csv(f)
-      return cls(
+      return cls(  # pyrefly: ignore[missing-argument]
           model=model,
           tflite=tflite,
           class_list=class_list,
-          **config,
+          **config,  # pyrefly: ignore[bad-unpacking]
       )
     else:
       raise ValueError(f'Unsupported class list name: {config.class_list_name}')
@@ -391,7 +391,7 @@ class BirdNet(zoo_interface.EmbeddingModel):
     logits = []
     for audio in audio_array:
       self.model.set_tensor(
-          input_details['index'], np.float32(audio)[np.newaxis, :]
+          input_details['index'], np.float32(audio)[np.newaxis, :]  # pyrefly: ignore[bad-index]
       )
       self.model.invoke()
       logits.append(self.model.get_tensor(output_details['index']).copy())
@@ -464,7 +464,7 @@ class GoogleWhaleModel(zoo_interface.EmbeddingModel):
         [str(c.numpy(), 'utf8') for c in model.metadata()['class_names']]
     )
     class_list = namespace.ClassList('multispecies_whale', class_names)
-    return cls(model=model, class_list=class_list, **config)
+    return cls(model=model, class_list=class_list, **config)  # pyrefly: ignore[bad-unpacking, missing-argument]
 
   @property
   def hop_size_s(self) -> float:
@@ -519,9 +519,9 @@ class TFHubModel(zoo_interface.EmbeddingModel):
   @classmethod
   def from_config(cls, config: config_dict.ConfigDict) -> 'TFHubModel':
     model = kaggle_hub.load(config.model_url)
-    return cls(
+    return cls(  # pyrefly: ignore[missing-argument]
         model=model,
-        **config,
+        **config,  # pyrefly: ignore[bad-unpacking]
     )
 
   @classmethod

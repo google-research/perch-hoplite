@@ -267,5 +267,5 @@ class ClassList:
         class_ = mapping.mapped_pairs[class_]
       if class_ in target_idxs:
         j = target_idxs[class_]
-        matrix = matrix.at[i, j].set(1)
+        matrix = matrix.at[i, j].set(1)  # pyrefly: ignore[missing-attribute]
     return matrix, np.any(matrix, axis=0)

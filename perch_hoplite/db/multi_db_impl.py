@@ -86,7 +86,7 @@ class MultiDBWrapper(interface.HopliteDBInterface):
     return self._dbs_list
 
   @classmethod
-  def create(
+  def create(  # pyrefly: ignore[bad-override]
       cls,
       dbs: Mapping[str, interface.HopliteDBInterface],
   ) -> "MultiDBWrapper":

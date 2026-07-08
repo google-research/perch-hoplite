@@ -71,7 +71,7 @@ def load_configs(
           'db_path must be specified when embedding multiple datasets.'
       )
     # Put the DB in the same directory as the audio.
-    db_path = epath.Path(next(iter(audio_sources.audio_globs)).base_path)
+    db_path = epath.Path(next(iter(audio_sources.audio_globs)).base_path)  # pyrefly: ignore[bad-assignment]
 
   preset_info = model_configs.get_preset_model_config(model_config_key)
   db_model_config = embed.ModelConfig(

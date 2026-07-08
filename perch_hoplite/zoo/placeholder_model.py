@@ -39,7 +39,7 @@ class PlaceholderModel(zoo_interface.EmbeddingModel):
 
   @classmethod
   def from_config(cls, config: config_dict.ConfigDict) -> 'PlaceholderModel':
-    return cls(**config)
+    return cls(**config)  # pyrefly: ignore[bad-unpacking, missing-argument]
 
   def __post_init__(self):
     db = namespace_db.load_db()

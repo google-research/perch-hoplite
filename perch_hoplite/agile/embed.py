@@ -17,17 +17,20 @@
 
 from concurrent import futures
 import dataclasses
+import datetime
 import itertools
 import threading
 from typing import Literal
 
 from absl import logging
 import audioread
+from etils import epath
 from ml_collections import config_dict
 import numpy as np
 from perch_hoplite import audio_io
 from perch_hoplite.agile import metadata
 from perch_hoplite.agile import source_info
+from perch_hoplite.agile import timestamp_resolver as ts_resolver
 from perch_hoplite.db import datatypes
 from perch_hoplite.db import interface as hoplite_interface
 from perch_hoplite.zoo import model_configs
@@ -66,6 +69,7 @@ def process_source_id(
     state,
     source_id: source_info.SourceId,
     window_size_s: float,
+    recording_timestamp: datetime.datetime | None = None,
 ):
   """Process a single audio source."""
   worker = state['worker']
@@ -102,16 +106,22 @@ def process_source_id(
   sources = []
   offsets = []
   embs = []
+  timestamps = []
 
   hop_size_s = worker.compute_hop_size_s(source_id, target_sample_rate)
   for t, embedding in enumerate(embeddings):
     offset_s = source_id.offset_s + t * hop_size_s
     offsets_list = [offset_s, offset_s + window_size_s]
+    ts = worker.timestamp_resolver.get_filepath_timestamp(
+        source_id.filepath, offset_s, base_timestamp=recording_timestamp
+    )
     for channel_embedding in embedding:
       sources.append(source_id)
       offsets.append(offsets_list)
       embs.append(channel_embedding)
-  return sources, offsets, embs
+      timestamps.append(ts)
+
+  return sources, offsets, embs, timestamps
 
 
 # TODO(tomdenton): Use itertools.batched in Python 3.12+
@@ -131,11 +141,24 @@ class EmbedWorker:
       db: hoplite_interface.HopliteDBInterface,
       embedding_model: zoo_interface.EmbeddingModel | None = None,
       audio_worker_threads: int = 8,
+      timestamp_resolver: ts_resolver.TimestampResolver | None = None,
+      timestamp_file_pattern: str | None = None,
   ):
     self.db = db
     self.model_config = model_config
     self.audio_sources = audio_sources
     self.audio_worker_threads = audio_worker_threads
+    self.timestamp_file_pattern = timestamp_file_pattern
+    if timestamp_resolver is None:
+      if self.timestamp_file_pattern is not None:
+        self.timestamp_resolver = ts_resolver.TimestampFromFilename(
+            db=self.db,
+            datetime_format=self.timestamp_file_pattern,
+        )
+      else:
+        self.timestamp_resolver = ts_resolver.NoneResolver(db=self.db)
+    else:
+      self.timestamp_resolver = timestamp_resolver
     if embedding_model is None:
       model_class = model_configs.get_model_class(model_config.model_key)
       self.embedding_model = model_class.from_config(model_config.model_config)
@@ -242,6 +265,27 @@ class EmbedWorker:
     self._deployment_map[(deployment_name, project_name)] = deployment_id
     return deployment_id
 
+  def get_recording_timestamp(
+      self, filename: str, dataset_name: str
+  ) -> datetime.datetime | None:
+    """Gets recording timestamp from metadata or filename pattern."""
+    md = self.metadata[dataset_name].get_recording_metadata(filename)
+    rec_datetime = md.get('datetime', None)
+    if isinstance(rec_datetime, str):
+      try:
+        rec_datetime = datetime.datetime.fromisoformat(rec_datetime)
+      except ValueError:
+        pass
+    if rec_datetime is None and self.timestamp_file_pattern is not None:
+      try:
+        rec_datetime = datetime.datetime.strptime(
+            epath.Path(filename).stem, self.timestamp_file_pattern
+        )
+        rec_datetime = rec_datetime.replace(tzinfo=datetime.timezone.utc)
+      except ValueError:
+        pass
+    return rec_datetime
+
   def _get_or_insert_recording_id(
       self,
       filename: str,
@@ -268,8 +312,11 @@ class EmbedWorker:
       )
     md = self.metadata[dataset_name].get_recording_metadata(filename)
     md.pop('recording', None)
+    md.pop('datetime', None)
+    rec_datetime = self.get_recording_timestamp(filename, dataset_name)
     recording_id = self.db.insert_recording(
         filename=filename,
+        datetime=rec_datetime,
         deployment_id=deployment_id,
         **md,
     )
@@ -436,6 +483,11 @@ class EmbedWorker:
       new_recordings: set[int] | None = None,
   ):
     """Embed audio examples from the given dataset."""
+    if self.timestamp_resolver is not None:
+      if 'timestamp' not in self.db.get_extra_table_columns().get(
+          'windows', {}
+      ):
+        self.db.add_extra_table_column('windows', 'timestamp', str)
     # Process all sources.
     state = {}
     state['db'] = self.db
@@ -450,11 +502,16 @@ class EmbedWorker:
           target_dataset_name
       )
       for source_ids_batch in batched(source_iterator, batch_size):
+        recording_timestamps = [
+            self.get_recording_timestamp(s.file_id, s.dataset_name)
+            for s in source_ids_batch
+        ]
         got = executor.map(
             process_source_id,
             itertools.repeat(state),
             source_ids_batch,
             itertools.repeat(self.window_size_s),
+            recording_timestamps,
         )
         # TODO(tomdenton): Consider using a db writer thread to avoid blocking.
         for result in got:
@@ -473,14 +530,21 @@ class EmbedWorker:
             dupe_strategy = 'allow'
           else:
             dupe_strategy = handle_duplicates
-          windows_batch = [
-              {
-                  'recording_id': recording_ids[i],
-                  'offsets': o,
-              }
-              for i, (_, o, _) in enumerate(zip(*result))
-          ]
-          embeddings_batch = np.array(result[2])
+          _, offsets_list, embs_list, timestamps_list = result
+
+          windows_batch = []
+          for _, (rec_id, o, ts) in enumerate(
+              zip(recording_ids, offsets_list, timestamps_list)
+          ):
+            win_dict = {
+                'recording_id': rec_id,
+                'offsets': o,
+            }
+            if ts is not None:
+              win_dict['timestamp'] = ts
+            windows_batch.append(win_dict)
+
+          embeddings_batch = np.array(embs_list)
           self.db.insert_windows_batch(
               windows_batch,
               embeddings_batch,

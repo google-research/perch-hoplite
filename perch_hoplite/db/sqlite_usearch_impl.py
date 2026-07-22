@@ -48,6 +48,7 @@ SQL_TYPE_TO_PYTHON_TYPE = {
     'REAL': float,
     'TEXT': str,
     'BLOB': bytes,
+    'TIMESTAMP': dt.datetime,
     'FLOAT_LIST': list,
 }
 PYTHON_TYPE_TO_SQL_TYPE = {
@@ -99,8 +100,15 @@ def get_offset_end(blob: bytes) -> float:
   )[1]
 
 
+def convert_timestamp(val: bytes) -> dt.datetime | None:
+  if not val:
+    return None
+  return dt.datetime.fromisoformat(val.decode('utf-8'))
+
+
 sqlite3.register_adapter(list, adapt_float_list)
 sqlite3.register_converter('FLOAT_LIST', convert_float_list)
+sqlite3.register_converter('TIMESTAMP', convert_timestamp)
 
 
 def get_default_usearch_config(
@@ -684,6 +692,11 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       )
 
     cursor = self._get_cursor()
+    cursor.execute(f'PRAGMA table_info({table_name})')
+    existing_columns = {col_info[1] for col_info in cursor.fetchall()}
+    if column_name in existing_columns:
+      return
+
     cursor.execute(f"""
         ALTER TABLE {table_name}
         ADD COLUMN {column_name} {PYTHON_TYPE_TO_SQL_TYPE[column_type]}

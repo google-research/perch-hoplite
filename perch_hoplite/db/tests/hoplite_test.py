@@ -15,6 +15,7 @@
 
 """Tests for Hoplite databases."""
 
+import datetime
 import shutil
 import tempfile
 
@@ -131,6 +132,41 @@ class HopliteTest(parameterized.TestCase):
       emb = db.get_embedding(idx)
       test_emb = test_db.get_embedding(idx)
       np.testing.assert_equal(emb, test_emb)
+
+  @parameterized.product(db_type=test_utils.DB_TYPES)
+  def test_extra_datetime_column(self, db_type):
+    rng = np.random.default_rng(42)
+    db = test_utils.make_db(self.tempdir, db_type, 10, rng, EMBEDDING_SIZE)
+
+    db.add_extra_table_column('windows', 'window_timestamp', datetime.datetime)
+
+    windows = db.get_all_windows()
+    self.assertNotEmpty(windows)
+    rec_id = windows[0].recording_id
+
+    now = datetime.datetime(
+        2023, 10, 24, 15, 30, 0, tzinfo=datetime.timezone.utc
+    )
+    one_emb = rng.normal(scale=0.2, size=EMBEDDING_SIZE)
+    win_dict = {
+        'recording_id': rec_id,
+        'offsets': [0.0, 1.0],
+        'window_timestamp': now,
+    }
+    db.insert_windows_batch([win_dict], np.array([one_emb]))
+
+    found = False
+    for window in db.get_all_windows():
+      if (
+          hasattr(window, 'window_timestamp')
+          and window.window_timestamp is not None
+      ):
+        got_ts = window.window_timestamp
+        if isinstance(got_ts, str):
+          got_ts = datetime.datetime.fromisoformat(got_ts)
+        self.assertEqual(got_ts, now)
+        found = True
+    self.assertTrue(found)
 
   @parameterized.product(db_type=test_utils.DB_TYPES)
   def test_labels_db_interface(self, db_type):

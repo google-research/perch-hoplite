@@ -15,6 +15,7 @@
 
 """Tests for embedding audio."""
 
+import datetime
 import os
 import shutil
 import tempfile
@@ -22,6 +23,7 @@ import tempfile
 from ml_collections import config_dict
 from perch_hoplite.agile import embed
 from perch_hoplite.agile import source_info
+from perch_hoplite.agile import timestamp_resolver
 from perch_hoplite.agile.tests import test_utils
 from perch_hoplite.db import db_loader
 
@@ -266,6 +268,105 @@ class DuplicateHandlingTest(absltest.TestCase):
     self.assertEqual(db.count_embeddings(), 2)
     worker.process_all(handle_duplicates='allow')
     self.assertEqual(db.count_embeddings(), 4)
+
+  def test_timestamp_resolver(self):
+    db = db_loader.create_new_usearch_db(db_path=self.db_path, embedding_dim=32)
+
+    class ExampleTimestampResolver(timestamp_resolver.TimestampResolver):
+
+      def get_filepath_timestamp(self, *args, **kwargs):
+        return datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc)
+
+    worker = embed.EmbedWorker(
+        self.audio_sources,
+        self.model_config,
+        db,
+        timestamp_resolver=ExampleTimestampResolver(
+            db=db, base_path=self.tempdir
+        ),
+    )
+    worker.process_all(handle_duplicates='allow')
+    self.assertEqual(db.count_embeddings(), 2)
+    windows = db.get_all_windows()
+    expected_ts = datetime.datetime(2020, 1, 1, tzinfo=datetime.timezone.utc)
+    self.assertTrue(
+        all(
+            hasattr(w, 'timestamp')
+            and (
+                w.timestamp == expected_ts
+                or (
+                    isinstance(w.timestamp, str)
+                    and datetime.datetime.fromisoformat(w.timestamp)
+                    == expected_ts
+                )
+            )
+            for w in windows
+        )
+    )
+
+  def test_timestamp_file_pattern(self):
+    tempdir = tempfile.mkdtemp()
+    try:
+      db = db_loader.create_new_usearch_db(
+          db_path=os.path.join(tempdir, 'test_db'), embedding_dim=32
+      )
+
+      classes = ['pos']
+      filenames = ['20231024_153000']
+      test_utils.make_wav_files(tempdir, classes, filenames, file_len_s=2.0)
+
+      audio_sources = source_info.AudioSources(
+          audio_globs=(
+              source_info.AudioSourceConfig(
+                  dataset_name='test',
+                  base_path=tempdir,
+                  file_glob='*/*.wav',
+                  min_audio_len_s=0.0,
+                  target_sample_rate_hz=16000,
+              ),
+          )
+      )
+
+      worker = embed.EmbedWorker(
+          audio_sources,
+          self.model_config,
+          db,
+          timestamp_file_pattern='%Y%m%d_%H%M%S_pos',
+      )
+      worker.process_all(handle_duplicates='allow')
+
+      recordings = db.get_all_recordings()
+      self.assertLen(recordings, 1)
+      recording = recordings[0]
+      expected_recording_dt = datetime.datetime(
+          2023, 10, 24, 15, 30, 0, tzinfo=datetime.timezone.utc
+      )
+      self.assertEqual(recording.datetime, expected_recording_dt)
+
+      windows = db.get_all_windows()
+      self.assertLen(windows, 2)
+
+      def get_timestamp(w):
+        ts = getattr(w, 'timestamp', None)
+        if isinstance(ts, str):
+          return datetime.datetime.fromisoformat(ts)
+        return ts
+
+      self.assertEqual(
+          get_timestamp(windows[0]),
+          datetime.datetime(
+              2023, 10, 24, 15, 30, 0, tzinfo=datetime.timezone.utc
+          ),
+      )
+      self.assertTrue(hasattr(windows[1], 'timestamp'))
+      self.assertEqual(
+          get_timestamp(windows[1]),
+          datetime.datetime(
+              2023, 10, 24, 15, 30, 1, tzinfo=datetime.timezone.utc
+          ),
+      )
+    finally:
+      shutil.rmtree(tempdir)
 
 
 if __name__ == '__main__':

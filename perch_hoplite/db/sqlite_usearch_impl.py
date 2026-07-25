@@ -783,3 +783,922 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     if not hasattr(self._thread_local, 'cursor') or self._thread_local.cursor is None:
       self._thread_local.cursor = self.db.cursor()
     return self._thread_local.cursor
+
+  def insert_metadata(self, key: str, value: config_dict.ConfigDict) -> None:
+    """Insert a key-value pair into the metadata table."""
+
+    cursor = self._get_cursor()
+    json_coded = value.to_json()
+    cursor.execute(
+        """
+        INSERT INTO hoplite_metadata (key, value)
+        VALUES (?, ?)
+        ON CONFLICT (key)
+        DO UPDATE SET value = excluded.value
+        """,
+        (key, json_coded),
+    )
+
+  def get_metadata(self, key: str | None) -> config_dict.ConfigDict:
+    """Get a key-value pair from the metadata table."""
+
+    cursor = self._get_cursor()
+
+    if key is None:
+      cursor.execute("""
+          SELECT key, value
+          FROM hoplite_metadata
+          """)
+      return config_dict.ConfigDict(
+          {k: json.loads(v) for k, v in cursor.fetchall()}
+      )
+
+    cursor.execute(
+        """
+        SELECT value
+        FROM hoplite_metadata
+        WHERE key = ?
+        """,
+        (key,),
+    )
+    result = cursor.fetchone()
+    if result is None:
+      raise KeyError(f'Metadata key not found: {key}')
+    return config_dict.ConfigDict(json.loads(result[0]))
+
+  def remove_metadata(self, key: str | None) -> None:
+    """Remove a key-value pair from the metadata table."""
+
+    cursor = self._get_cursor()
+
+    if key is None:
+      cursor.execute("""
+          DELETE FROM hoplite_metadata
+          """)
+      return
+
+    cursor.execute(
+        """
+        DELETE FROM hoplite_metadata
+        WHERE key = ?
+        """,
+        (key,),
+    )
+    if cursor.rowcount == 0:
+      raise KeyError(f'Metadata key not found: {key}')
+
+  def insert_deployment(
+      self,
+      name: str,
+      project: str,
+      latitude: float | None = None,
+      longitude: float | None = None,
+      **kwargs: Any,
+  ) -> int:
+    """Insert a deployment into the database."""
+
+    for key, value in kwargs.items():
+      if key not in self._extra_table_columns['deployments']:
+        self.add_extra_table_column('deployments', key, type(value))
+    cursor = self._get_cursor()
+    columns_str, placeholders_str, values = format_sql_insert_values(
+        name=name,
+        project=project,
+        latitude=latitude,
+        longitude=longitude,
+        **kwargs,
+    )
+    update_clause_str = format_sql_update_on_conflict(
+        'latitude',
+        'longitude',
+        *self._extra_table_columns['deployments'].keys(),
+    )
+    cursor.execute(
+        f"""
+        INSERT INTO deployments {columns_str}
+        VALUES {placeholders_str}
+        ON CONFLICT (name, project)
+        {update_clause_str}
+        """,
+        values,
+    )
+
+    deployment_id = cursor.lastrowid
+    if deployment_id is None:
+      raise RuntimeError('Error inserting the deployment into the database.')
+    return deployment_id
+
+  def get_deployment(self, deployment_id: int) -> datatypes.Deployment:
+    """Get a deployment from the database."""
+
+    deployment_id = int(deployment_id)
+
+    cursor = self._get_cursor()
+    cursor.execute(
+        """
+        SELECT *
+        FROM deployments
+        WHERE id = ?
+        """,
+        (deployment_id,),
+    )
+    result = cursor.fetchone()
+    if result is None:
+      raise KeyError(f'Deployment id not found: {deployment_id}')
+
+    columns = [col[0] for col in cursor.description]
+    return datatypes.Deployment(**dict(zip(columns, result)))
+
+  def remove_deployment(self, deployment_id: int) -> None:
+    """Remove a deployment from the database."""
+
+    deployment_id = int(deployment_id)
+
+    remove_window_ids = self.match_window_ids(
+        deployments_filter=config_dict.create(eq=dict(id=deployment_id))
+    )
+    if remove_window_ids:
+      if not self._ui_loaded:
+        self.ui.load()
+        self._ui_loaded = True
+      self.ui.remove(remove_window_ids)
+      self._ui_updated = True
+
+    cursor = self._get_cursor()
+    cursor.execute(
+        """
+        DELETE FROM deployments
+        WHERE id = ?
+        """,
+        (deployment_id,),
+    )
+    if cursor.rowcount == 0:
+      raise KeyError(f'Deployment id not found: {deployment_id}')
+
+  def insert_recording(
+      self,
+      filename: str,
+      datetime: dt.datetime | None = None,
+      deployment_id: int | None = None,
+      **kwargs: Any,
+  ) -> int:
+    """Insert a recording into the database."""
+    for key, value in kwargs.items():
+      if key not in self._extra_table_columns['recordings']:
+        self.add_extra_table_column('recordings', key, type(value))
+
+    cursor = self._get_cursor()
+    columns_str, placeholders_str, values = format_sql_insert_values(
+        filename=filename,
+        datetime=datetime,
+        deployment_id=deployment_id,
+        **kwargs,
+    )
+    update_clause_str = format_sql_update_on_conflict(
+        'datetime',
+        *self._extra_table_columns['recordings'].keys(),
+    )
+    try:
+      cursor.execute(
+          f"""
+          INSERT INTO recordings {columns_str}
+          VALUES {placeholders_str}
+          ON CONFLICT (filename, deployment_id)
+          {update_clause_str}
+          """,
+          values,
+      )
+    except sqlite3.Error as e:
+      if e.sqlite_errorname == 'SQLITE_CONSTRAINT_FOREIGNKEY':
+        custom_msg = 'Check that the deployment_id exists.'
+      else:
+        custom_msg = ''
+      raise RuntimeError(
+          f'Error inserting the recording into the database. {custom_msg}'
+      ) from e
+
+    recording_id = cursor.lastrowid
+    if recording_id is None:
+      raise RuntimeError('Error inserting the recording into the database.')
+    return recording_id
+
+  def get_recording(self, recording_id: int) -> datatypes.Recording:
+    """Get a recording from the database."""
+
+    recording_id = int(recording_id)
+
+    cursor = self._get_cursor()
+    cursor.execute(
+        """
+        SELECT *
+        FROM recordings
+        WHERE id = ?
+        """,
+        (recording_id,),
+    )
+    result = cursor.fetchone()
+    if result is None:
+      raise KeyError(f'Recording id not found: {recording_id}')
+
+    columns = [col[0] for col in cursor.description]
+    recording = datatypes.Recording(**dict(zip(columns, result)))
+    if recording.datetime is not None:
+      recording.datetime = dt.datetime.fromisoformat(recording.datetime)  # pyrefly: ignore[bad-argument-type]
+    return recording
+
+  def remove_recording(self, recording_id: int) -> None:
+    """Remove a recording from the database."""
+
+    recording_id = int(recording_id)
+
+    remove_window_ids = self.match_window_ids(
+        recordings_filter=config_dict.create(eq=dict(id=recording_id))
+    )
+    if remove_window_ids:
+      if not self._ui_loaded:
+        self.ui.load()
+        self._ui_loaded = True
+      self.ui.remove(remove_window_ids)
+      self._ui_updated = True
+
+    cursor = self._get_cursor()
+    cursor.execute(
+        """
+        DELETE FROM recordings
+        WHERE id = ?
+        """,
+        (recording_id,),
+    )
+    if cursor.rowcount == 0:
+      raise KeyError(f'Recording id not found: {recording_id}')
+
+  def insert_window(
+      self,
+      recording_id: int,
+      offsets: list[float],
+      embedding: np.ndarray | None = None,
+      handle_duplicates: Literal[
+          'allow', 'overwrite', 'skip', 'error'
+      ] = 'error',
+      **kwargs: Any,
+  ) -> int:
+    """Insert a window into the database."""
+
+    if embedding is not None and embedding.shape[-1] != self._embedding_dim:
+      raise ValueError(
+          f'Incorrect embedding dimension. Expected {self._embedding_dim}, but'
+          f' got {embedding.shape[-1]}.'
+      )
+
+    duplicate_id = self._handle_window_duplicates(
+        recording_id, offsets, handle_duplicates
+    )
+    if duplicate_id is not None:
+      return duplicate_id
+
+    cursor = self._get_cursor()
+    columns_str, placeholders_str, values = format_sql_insert_values(
+        recording_id=recording_id,
+        offsets=offsets,
+        **kwargs,
+    )
+    try:
+      cursor.execute(
+          f"""
+          INSERT INTO windows {columns_str}
+          VALUES {placeholders_str}
+          """,
+          values,
+      )
+    except sqlite3.Error as e:
+      if e.sqlite_errorname == 'SQLITE_CONSTRAINT_FOREIGNKEY':
+        custom_msg = 'Check that the recording_id exists.'
+      else:
+        custom_msg = ''
+      raise RuntimeError(
+          f'Error inserting the window into the database. {custom_msg}'
+      ) from e
+
+    window_id = cursor.lastrowid
+    if window_id is None:
+      raise RuntimeError('Error inserting the window into the database.')
+    if embedding is not None:
+      if not self._ui_loaded:
+        self.ui.load()
+        self._ui_loaded = True
+      self.ui.add(window_id, embedding.astype(self._embedding_dtype))
+      self._ui_updated = True
+    return window_id
+
+  def insert_windows_batch(
+      self,
+      windows_batch: Sequence[dict[str, Any]],
+      embeddings_batch: np.ndarray | None = None,
+      handle_duplicates: Literal[
+          'allow', 'overwrite', 'skip', 'error'
+      ] = 'error',
+  ) -> Sequence[int]:
+    """Insert a batch of windows into the database."""
+
+    if (
+        embeddings_batch is not None
+        and embeddings_batch.shape[-1] != self._embedding_dim
+    ):
+      raise ValueError(
+          f'Incorrect embedding dimension. Expected {self._embedding_dim}, but'
+          f' got {embeddings_batch.shape[-1]}.'
+      )
+
+    # Make sure that, unless we're in "allow" mode, there are no duplicates in
+    # the batch itself.
+    if handle_duplicates != 'allow':
+      for i in range(len(windows_batch)):
+        for j in range(i + 1, len(windows_batch)):
+          if windows_batch[i]['recording_id'] == windows_batch[j][
+              'recording_id'
+          ] and np.allclose(
+              windows_batch[i]['offsets'],
+              windows_batch[j]['offsets'],
+              rtol=0.0,
+              atol=1e-6,
+          ):
+            raise RuntimeError(
+                'Duplicates found in `windows_batch`, but this use case is not'
+                ' supported unless `handle_duplicates` is set to "allow"'
+                f' (handle_duplicates = "{handle_duplicates}").'
+            )
+
+    # Handle duplicates from the database.
+    window_ids = [-1] * len(windows_batch)
+    if handle_duplicates in ['overwrite', 'skip', 'error']:
+      keep_idx = []
+      remove_window_ids = set()
+
+      # Go over all windows in the batch and check: (1) which ones need to be
+      # removed, (2) which ones get a match and need to be skipped from
+      # insertion, (3) which ones trigger an error, and (4) which ones still
+      # need to be inserted.
+      for idx, window_kwargs in enumerate(windows_batch):
+        matches = self.get_all_windows(
+            filter=config_dict.create(
+                eq=dict(recording_id=window_kwargs['recording_id']),
+                approx=dict(offsets=window_kwargs['offsets']),
+            )
+        )
+        if matches:
+          if handle_duplicates == 'overwrite':
+            for match in matches:
+              remove_window_ids.add(match.id)
+            keep_idx.append(idx)
+          elif handle_duplicates == 'skip':
+            window_ids[idx] = matches[0].id
+          elif handle_duplicates == 'error':
+            raise RuntimeError(
+                f'Duplicate window found (id = {matches[0].id}), but'
+                ' `handle_duplicates` is set to "error".'
+            )
+        else:
+          keep_idx.append(idx)
+
+      # Now that no duplicates triggered an error, we can remove those that were
+      # overwritten.
+      for window_id in remove_window_ids:
+        self.remove_window(window_id)
+
+    else:
+      keep_idx = list(range(len(windows_batch)))
+
+    # Insert the windows that were not skipped and did not trigger an error.
+    for idx in keep_idx:
+      window_ids[idx] = self.insert_window(
+          embedding=None,
+          handle_duplicates='allow',
+          **windows_batch[idx],
+      )
+
+    if embeddings_batch is not None:
+      if not self._ui_loaded:
+        self.ui.load()
+        self._ui_loaded = True
+      self.ui.add(
+          np.array(window_ids)[keep_idx],
+          embeddings_batch[keep_idx].astype(self._embedding_dtype),
+      )
+      self._ui_updated = True
+
+    return window_ids
+
+  def get_window(
+      self,
+      window_id: int,
+      include_embedding: bool = False,
+  ) -> datatypes.Window:
+    """Get a window from the database."""
+
+    window_id = int(window_id)
+
+    cursor = self._get_cursor()
+    cursor.execute(
+        """
+        SELECT *
+        FROM windows
+        WHERE id = ?
+        """,
+        (window_id,),
+    )
+    result = cursor.fetchone()
+    if result is None:
+      raise KeyError(f'Window id not found: {window_id}')
+
+    columns = [col[0] for col in cursor.description]
+    window = datatypes.Window(
+        embedding=None,
+        **dict(zip(columns, result)),
+    )
+    if include_embedding:
+      window.embedding = self.get_embedding(window_id)
+    return window
+
+  def get_window_annotations(
+      self, window_id: int, label: str | None = None
+  ) -> Sequence[datatypes.Annotation]:
+    """Get all annotations intersecting the given window."""
+    # Note that we may improve performance through memoization, though it would
+    # need to be invalidated upon insertion/deletion of windows or annotations.
+    window = self.get_window(window_id)
+    w_start, w_end = window.offsets
+
+    cursor = self._get_cursor()
+    # Note that the inequalities should match the window.intersects() method.
+    query = """
+        SELECT *
+        FROM annotations
+        WHERE recording_id = ?
+        AND GET_OFFSET_START(offsets) < ?
+        AND GET_OFFSET_END(offsets) > ?
+        """
+    params = [window.recording_id, w_end, w_start]
+    if label is not None:
+      query += ' AND label = ?'
+      params.append(label)  # pyrefly: ignore[bad-argument-type]
+    cursor.execute(query, params)
+    annotations = []
+    columns = [col[0] for col in cursor.description]
+    for result in cursor.fetchall():
+      annotation = datatypes.Annotation(**dict(zip(columns, result)))
+      annotation.label_type = datatypes.LabelType(annotation.label_type)
+      annotations.append(annotation)
+    return annotations
+
+  def get_embedding(self, window_id: int) -> np.ndarray:
+    """Get an embedding vector from the database."""
+
+    window_id = int(window_id)
+
+    found = self.ui.contains(window_id)
+    if not isinstance(found, bool):
+      raise RuntimeError(
+          'Expected bool result from the USearch `contains()` method, but got'
+          f' {type(found)}: {found}.'
+      )
+    if not found:
+      raise KeyError(f'Embedding vector not found for window id: {window_id}')
+    embedding = self.ui.get(window_id)
+    if not isinstance(embedding, np.ndarray):
+      raise RuntimeError(
+          'Expected np.ndarray result from the USearch `get()` method, but got'
+          f' {type(embedding)}: {embedding}.'
+      )
+    return embedding
+
+  def get_embeddings_batch(
+      self,
+      window_ids: Sequence[int],
+  ) -> np.ndarray:
+    """Get a batch of embedding vectors from the database."""
+
+    found = self.ui.contains(window_ids)
+    if not isinstance(found, np.ndarray):
+      raise RuntimeError(
+          'Expected np.ndarray result from the USearch `contains()` method, but'
+          f' got {type(found)}: {found}.'
+      )
+    if not np.all(found):
+      raise KeyError(
+          'Embedding vectors not found for window ids:'
+          f' {itertools.compress(window_ids, ~found)}'
+      )
+    embeddings_batch = self.ui.get(window_ids)
+    if isinstance(embeddings_batch, (tuple, list)):
+      embeddings_batch = np.stack(embeddings_batch)  # pyrefly: ignore[no-matching-overload]
+    if not isinstance(embeddings_batch, np.ndarray):
+      raise RuntimeError(
+          'Expected np.ndarray result from the USearch `get()` method, but got'
+          f' {type(embeddings_batch)}: {embeddings_batch}.'
+      )
+    return embeddings_batch
+
+  def remove_window(self, window_id: int) -> None:
+    """Remove a window from the database."""
+
+    window_id = int(window_id)
+
+    cursor = self._get_cursor()
+    cursor.execute(
+        """
+        DELETE FROM windows
+        WHERE id = ?
+        """,
+        (window_id,),
+    )
+    if cursor.rowcount == 0:
+      raise KeyError(f'Window id not found: {window_id}')
+
+    if not self._ui_loaded:
+      self.ui.load()
+      self._ui_loaded = True
+    self.ui.remove(window_id)
+    self._ui_updated = True
+
+  def insert_annotation(
+      self,
+      recording_id: int,
+      offsets: list[float],
+      label: str,
+      label_type: datatypes.LabelType,
+      provenance: str,
+      handle_duplicates: Literal[
+          'allow', 'overwrite', 'skip', 'error'
+      ] = 'error',
+      **kwargs: Any,
+  ) -> int:
+    """Insert an annotation into the database."""
+
+    duplicate_id = self._handle_annotation_duplicates(
+        recording_id, offsets, label, label_type, provenance, handle_duplicates
+    )
+    if duplicate_id is not None:
+      return duplicate_id
+
+    cursor = self._get_cursor()
+    columns_str, placeholders_str, values = format_sql_insert_values(
+        recording_id=recording_id,
+        offsets=offsets,
+        label=label,
+        label_type=label_type,
+        provenance=provenance,
+        **kwargs,
+    )
+    try:
+      cursor.execute(
+          f"""
+          INSERT INTO annotations {columns_str}
+          VALUES {placeholders_str}
+          """,
+          values,
+      )
+    except sqlite3.Error as e:
+      if e.sqlite_errorname == 'SQLITE_CONSTRAINT_FOREIGNKEY':
+        custom_msg = 'Check that the recording_id exists.'
+      else:
+        custom_msg = ''
+      raise RuntimeError(
+          f'Error inserting the annotation into the database. {custom_msg}'
+      ) from e
+
+    annotation_id = cursor.lastrowid
+    if annotation_id is None:
+      raise RuntimeError('Error inserting the annotation into the database.')
+    return cursor.lastrowid  # pyrefly: ignore[bad-return]
+
+  def get_annotation(self, annotation_id: int) -> datatypes.Annotation:
+    """Get an annotation from the database."""
+
+    annotation_id = int(annotation_id)
+
+    cursor = self._get_cursor()
+    cursor.execute(
+        """
+        SELECT *
+        FROM annotations
+        WHERE id = ?
+        """,
+        (annotation_id,),
+    )
+    result = cursor.fetchone()
+    if result is None:
+      raise KeyError(f'Annotation id not found: {annotation_id}')
+
+    columns = [col[0] for col in cursor.description]
+    annotation = datatypes.Annotation(**dict(zip(columns, result)))
+    annotation.label_type = datatypes.LabelType(annotation.label_type)
+    return annotation
+
+  def remove_annotation(self, annotation_id: int) -> None:
+    """Remove an annotation from the database."""
+
+    annotation_id = int(annotation_id)
+
+    cursor = self._get_cursor()
+    cursor.execute(
+        """
+        DELETE FROM annotations
+        WHERE id = ?
+        """,
+        (annotation_id,),
+    )
+    if cursor.rowcount == 0:
+      raise KeyError(f'Annotation id not found: {annotation_id}')
+
+  def count_embeddings(self) -> int:
+    """Get the number of embeddings in the database."""
+    return self.ui.size
+
+  def match_window_ids(
+      self,
+      deployments_filter: config_dict.ConfigDict | None = None,
+      recordings_filter: config_dict.ConfigDict | None = None,
+      windows_filter: config_dict.ConfigDict | None = None,
+      annotations_filter: config_dict.ConfigDict | None = None,
+      limit: int | None = None,
+  ) -> Sequence[int]:
+    """Get matching window IDs from the database based on given filters."""
+    cursor = self._get_cursor()
+    if annotations_filter:
+      select_clause = 'SELECT DISTINCT windows.id'
+    else:
+      select_clause = 'SELECT windows.id'
+    from_clause, where_clause, values = _get_window_query_components(
+        deployments_filter=deployments_filter,
+        recordings_filter=recordings_filter,
+        windows_filter=windows_filter,
+        annotations_filter=annotations_filter,
+    )
+
+    # Build the `LIMIT ...` part of the SQL query.
+    if limit is None:
+      limit_clause = ''
+    else:
+      limit_clause = f'LIMIT {limit}'
+
+    # Execute the SQL query and return the window IDs.
+    cursor.execute(
+        f"""
+        {select_clause}
+        {from_clause}
+        {where_clause}
+        {limit_clause}
+        """,
+        values,
+    )
+    return [result[0] for result in cursor.fetchall()]
+
+  def get_all_projects(self) -> Sequence[str]:
+    """Get all distinct projects from the database."""
+
+    cursor = self._get_cursor()
+    cursor.execute("""
+        SELECT DISTINCT project
+        FROM deployments
+        ORDER BY project
+        """)
+    return [result[0] for result in cursor.fetchall()]
+
+  def get_all_deployments(
+      self,
+      filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
+  ) -> Sequence[datatypes.Deployment]:
+    """Get all deployments from the database."""
+
+    cursor = self._get_cursor()
+    conditions_str, values = format_sql_where_conditions(filter)
+    where_clause = f'WHERE {conditions_str}' if conditions_str else ''
+    cursor.execute(
+        f"""
+        SELECT *
+        FROM deployments
+        {where_clause}
+        """,
+        values,
+    )
+
+    columns = [col[0] for col in cursor.description]
+    deployments = [
+        datatypes.Deployment(**dict(zip(columns, result)))
+        for result in cursor.fetchall()
+    ]
+    return deployments
+
+  def get_all_recordings(
+      self,
+      filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
+  ) -> Sequence[datatypes.Recording]:
+    """Get all recordings from the database."""
+
+    cursor = self._get_cursor()
+    conditions_str, values = format_sql_where_conditions(filter)
+    where_clause = f'WHERE {conditions_str}' if conditions_str else ''
+    cursor.execute(
+        f"""
+        SELECT *
+        FROM recordings
+        {where_clause}
+        """,
+        values,
+    )
+
+    recordings = []
+    columns = [col[0] for col in cursor.description]
+    for result in cursor.fetchall():
+      recording = datatypes.Recording(**dict(zip(columns, result)))
+      if recording.datetime is not None:
+        recording.datetime = dt.datetime.fromisoformat(recording.datetime)  # pyrefly: ignore[bad-argument-type]
+      recordings.append(recording)
+    return recordings
+
+  def get_all_windows(
+      self,
+      include_embedding: bool = False,
+      deployments_filter: config_dict.ConfigDict | None = None,
+      recordings_filter: config_dict.ConfigDict | None = None,
+      filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
+      annotations_filter: config_dict.ConfigDict | None = None,
+  ) -> Sequence[datatypes.Window]:
+    """Get all windows from the database."""
+    cursor = self._get_cursor()
+    if annotations_filter:
+      select_clause = 'SELECT DISTINCT windows.*'
+    else:
+      select_clause = 'SELECT windows.*'
+    from_clause, where_clause, values = _get_window_query_components(
+        deployments_filter=deployments_filter,
+        recordings_filter=recordings_filter,
+        windows_filter=filter,
+        annotations_filter=annotations_filter,
+    )
+
+    # Execute the SQL query and return the window IDs.
+    cursor.execute(
+        f"""
+        {select_clause}
+        {from_clause}
+        {where_clause}
+        """,
+        values,
+    )
+
+    windows = []
+    columns = [col[0] for col in cursor.description]
+    for result in cursor.fetchall():
+      window = datatypes.Window(
+          embedding=None,
+          **dict(zip(columns, result)),
+      )
+      if include_embedding:
+        window.embedding = self.get_embedding(window.id)
+      windows.append(window)
+    return windows
+
+  def get_all_annotations(
+      self,
+      filter: config_dict.ConfigDict | None = None,  # pylint: disable=redefined-builtin
+  ) -> Sequence[datatypes.Annotation]:
+    """Get all annotations from the database."""
+
+    cursor = self._get_cursor()
+    conditions_str, values = format_sql_where_conditions(filter)
+    where_clause = f'WHERE {conditions_str}' if conditions_str else ''
+    cursor.execute(
+        f"""
+        SELECT *
+        FROM annotations
+        {where_clause}
+        """,
+        values,
+    )
+
+    annotations = []
+    columns = [col[0] for col in cursor.description]
+    for result in cursor.fetchall():
+      annotation = datatypes.Annotation(**dict(zip(columns, result)))
+      annotation.label_type = datatypes.LabelType(annotation.label_type)
+      annotations.append(annotation)
+    return annotations
+
+  def get_all_labels(
+      self,
+      label_type: datatypes.LabelType | None = None,
+  ) -> Sequence[str]:
+    """Get all distinct labels from the database."""
+
+    cursor = self._get_cursor()
+    if label_type is None:
+      where_clause = ''
+      values = tuple()
+    else:
+      filter_dict = config_dict.create(eq=dict(label_type=label_type))
+      conditions_str, values = format_sql_where_conditions(filter_dict)
+      where_clause = f'WHERE {conditions_str}' if conditions_str else ''
+    cursor.execute(
+        f"""
+        SELECT DISTINCT label
+        FROM annotations
+        {where_clause}
+        ORDER BY label
+        """,
+        values,
+    )
+    return [result[0] for result in cursor.fetchall()]
+
+  def count_each_label(
+      self,
+      label_type: datatypes.LabelType | None = None,
+  ) -> collections.Counter[str]:
+    """Count each label in the database, ignoring provenance."""
+
+    cursor = self._get_cursor()
+    if label_type is None:
+      where_clause = ''
+      values = tuple()
+    else:
+      filter_dict = config_dict.create(eq=dict(label_type=label_type))
+      conditions_str, values = format_sql_where_conditions(filter_dict)
+      where_clause = f'WHERE {conditions_str}' if conditions_str else ''
+
+    # Subselect with DISTINCT is needed to avoid double-counting the same label
+    # on the same recording offsets because of different provenances.
+    cursor.execute(
+        f"""
+        SELECT label, COUNT(*)
+        FROM (
+            SELECT DISTINCT recording_id, offsets, label, label_type
+            FROM annotations
+            {where_clause}
+        )
+        GROUP BY label
+        ORDER BY label
+        """,
+        values,
+    )
+    return collections.Counter(
+        {result[0]: result[1] for result in cursor.fetchall()}
+    )
+
+  def get_embedding_dim(self) -> int:
+    """Get the embedding dimension."""
+    return self._embedding_dim
+
+  def get_embedding_dtype(self) -> type[Any]:
+    """Get the embedding data type."""
+    return self._embedding_dtype
+
+  def search(
+      self,
+      query_embedding: np.ndarray,
+      search_list_size: int,
+      approximate: bool = True,
+      target_score: float | None = None,
+      score_fn_name: str = 'dot',
+      **kwargs: Any,
+  ) -> search_results.TopKSearchResults:
+    """Search for neighbors of the query embedding.
+
+    Args:
+      query_embedding: The query embedding vector.
+      search_list_size: The number of results to return.
+      approximate: Whether to use approximate search.
+      target_score: If set, search for examples near this score.
+      score_fn_name: The name of the score function to use. Likely ignored if
+        `approximate` is True, as the underlying indexed score function will be
+        used.
+      **kwargs: Additional keyword arguments to pass to the search function.
+
+    Returns:
+      A TopKSearchResults object containing the search results.
+    """
+    if not approximate and target_score is not None:
+      return super().search(
+          query_embedding=query_embedding,
+          search_list_size=search_list_size,
+          approximate=approximate,
+          target_score=target_score,
+          score_fn_name=score_fn_name,
+          **kwargs,
+      )
+
+    if target_score is not None:
+      raise ValueError(
+          'Approximate search does not support target_score sampling.'
+      )
+
+    ann_matches = self.ui.search(
+        query_embedding, count=search_list_size, exact=not approximate
+    )
+    results = search_results.TopKSearchResults(top_k=search_list_size)
+    for k, d in zip(ann_matches.keys, ann_matches.distances):
+      # Usearch with IP returns 1 - inner_product.
+      # We want higher is better, so 1 - d.
+      results.update(search_results.SearchResult(k, 1.0 - d))
+    score_fn = score_functions.get_score_fn(score_fn_name)
+    results = brutalism.rerank(query_embedding, results, self, score_fn)
+    return results

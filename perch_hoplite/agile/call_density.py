@@ -182,7 +182,7 @@ class CallDensityEstimator(datatypes.HopliteConfig, abc.ABC):
     raise NotImplementedError
 
   @classmethod
-  def from_config_dict(
+  def from_config_dict(  # pyrefly: ignore[bad-override]
       cls, db: interface.HopliteDBInterface, config: config_dict.ConfigDict
   ) -> 'CallDensityEstimator':
     """Creates a CallDensityEstimator from a ConfigDict."""
@@ -310,7 +310,7 @@ class CallDensityPlattScaling(CallDensityEstimator):
     """Collect selected validation examples."""
     return self.validation_examples
 
-  def estimate_call_density(
+  def estimate_call_density(  # pyrefly: ignore[bad-override]
       self,
       db: interface.HopliteDBInterface,
       rng_seed: int = 42,
@@ -340,7 +340,7 @@ class CallDensityPlattScaling(CallDensityEstimator):
     )
     xs, unlabeled_kde = fit_kde(unlabeled_scores, n_points)
     _, platt_pred = fit_logistic(
-        scores, labels, xs, sample_weight=weights, l2_reg=l2_reg
+        scores, labels, xs, sample_weight=weights, l2_reg=l2_reg  # pyrefly: ignore[bad-argument-type]
     )
     p_pos_mle = np.sum(unlabeled_kde * platt_pred) * (xs[1] - xs[0])
 
@@ -353,14 +353,14 @@ class CallDensityPlattScaling(CallDensityEstimator):
           boot_labels,
           xs,
           sample_weight=boot_weights,
-          l2_reg=l2_reg,
+          l2_reg=l2_reg,  # pyrefly: ignore[bad-argument-type]
       )
       sampled_p_pos.append(
           np.sum(unlabeled_kde * boot_platt_pred) * (xs[1] - xs[0])
       )
     return p_pos_mle, np.array(sampled_p_pos)
 
-  def estimate_deployment_call_density(
+  def estimate_deployment_call_density(  # pyrefly: ignore[bad-override]
       self,
       db: interface.HopliteDBInterface,
       rng_seed: int = 42,
@@ -434,7 +434,7 @@ class CallDensityPlattScaling(CallDensityEstimator):
     for _ in range(n_resamples):
       bs_val = self.validation_examples.bootstrap_sample(rng)
       bs_s, bs_l, bs_w = bs_val.to_vectors()
-      lr_bs, _ = fit_logistic(bs_s, bs_l, xs, sample_weight=bs_w, l2_reg=l2_reg)
+      lr_bs, _ = fit_logistic(bs_s, bs_l, xs, sample_weight=bs_w, l2_reg=l2_reg)  # pyrefly: ignore[bad-argument-type]
       bs_params_list.append(get_lr_params(lr_bs, bs_s, bs_l, bs_w, rng))
 
     # 2. Gather data per deployment/recording.
@@ -669,7 +669,7 @@ class CallDensityATB(CallDensityEstimator):
         validation_examples=examples,
     )
 
-  def estimate_call_density(
+  def estimate_call_density(  # pyrefly: ignore[bad-override]
       self,
       db: interface.HopliteDBInterface,
       n_resamples: int = 1024,

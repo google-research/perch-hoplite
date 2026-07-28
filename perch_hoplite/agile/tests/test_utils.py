@@ -137,7 +137,7 @@ def compute_roc_auc(
   scores = []
   labels = []
   for window_id, label in gt_labels.items():
-    scores.append(linear_classifier(db.get_window(window_id).embedding)[0][0])
+    scores.append(linear_classifier(db.get_window(window_id).embedding)[0][0])  # pyrefly: ignore[bad-argument-type]
     labels.append(label.value)
   scores = np.array(scores)
   labels = np.array(labels)

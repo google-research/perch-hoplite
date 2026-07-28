@@ -172,7 +172,7 @@ class TimestampFromFilename(TimestampResolver):
           'filepath must be provided if base_timestamp is not set.'
       )
     filepath = epath.Path(filepath)
-    timestamp = datetime.datetime.strptime(filepath.stem, self.datetime_format)
+    timestamp = datetime.datetime.strptime(filepath.stem, self.datetime_format)  # pyrefly: ignore[bad-argument-type]
     timestamp = timestamp.replace(tzinfo=self.datetime_timezone)
     if subchunk_offset_s:
       timestamp += datetime.timedelta(seconds=subchunk_offset_s)

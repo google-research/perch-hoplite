@@ -284,7 +284,7 @@ class EmbedWorker:
         rec_datetime = rec_datetime.replace(tzinfo=datetime.timezone.utc)
       except ValueError:
         pass
-    return rec_datetime
+    return rec_datetime  # pyrefly: ignore[bad-return]
 
   def _get_or_insert_recording_id(
       self,

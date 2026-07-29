@@ -183,6 +183,8 @@ def train_linear_classifier(
     weak_neg_weight: float,
     num_train_steps: int,
     loss: str = 'bce',
+    train_idxes: np.ndarray | None = None,
+    eval_idxes: np.ndarray | None = None,
 ) -> tuple[LinearClassifier, dict[str, float]]:
   """Train a linear classifier."""
   embedding_dim = data_manager.db.get_embedding_dim()
@@ -207,7 +209,8 @@ def train_linear_classifier(
     optimizer.apply_gradients(zip(grads, lin_model.trainable_variables))
     return loss
 
-  train_idxes, eval_idxes = data_manager.get_train_test_split()
+  if train_idxes is None or eval_idxes is None:
+    train_idxes, eval_idxes = data_manager.get_train_test_split()
   train_iter_ = data_manager.batched_example_iterator(
       train_idxes, add_weak_negatives=True, repeat=True
   )

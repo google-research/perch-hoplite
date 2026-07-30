@@ -24,8 +24,8 @@ my_dataset/
 
 **Recordings** are identified by their relative path from the `base_path`,
 including the deployment directory (e.g., `deployment_A/recording01.wav`).
-This relative path serves as the `file_id` for recordings when linking
-metadata or annotations.
+This relative path serves as the recording identifier (represented by the
+`recording` column) for recordings when linking metadata or annotations.
 
 ## Adding metadata to the Hoplite Database
 
@@ -36,8 +36,8 @@ located in the `base_path` of each `AudioSourceConfig`.
 To add metadata, create the following three files in the root of your dataset
 directory:
 
-1.  **`metadata_description.csv`**: This file describes the metadata fields you
-    want to add. It should contain the following columns:
+1.  **`hoplite_metadata_description.csv`**: This file describes the metadata
+    fields you want to add. It should contain the following columns:
     *   `field_name`: The name of the metadata field (e.g., `habitat`).
     *   `metadata_level`: The level at which metadata applies, either
         `deployment` or `recording`.
@@ -50,13 +50,13 @@ directory:
     corresponds to the directory name if audio files are in
     `deployment/recording.wav`
     format), and subsequent columns should match `field_name`s from
-    `metadata_description.csv` where `metadata_level` is `deployment`.
+    `hoplite_metadata_description.csv` where `metadata_level` is `deployment`.
 
 3.  **`hoplite_recordings_metadata.csv`**: This file contains metadata for each
     recording. The first column must be the recording identifier (e.g.
     `deployment/recording.wav`),
     and subsequent columns should match `field_name`s from
-    `metadata_description.csv` where `metadata_level` is `recording`.
+    `hoplite_metadata_description.csv` where `metadata_level` is `recording`.
 
 ### Example
 
@@ -64,17 +64,17 @@ directory:
 
 ```csv
 field_name,metadata_level,type,description
-deployment_name,deployment,str,Deployment identifier.
+deployment,deployment,str,Deployment identifier.
 habitat,deployment,str,Habitat type.
 latitude,deployment,float,Deployment latitude.
-file_id,recording,str,Recording identifier.
+recording,recording,str,Recording identifier.
 mic_type,recording,str,Microphone type.
 ```
 
 **`hoplite_deployments_metadata.csv`**
 
 ```csv
-deployment_name,habitat,latitude
+deployment,habitat,latitude
 DEP01,"forest",47.6
 DEP02,"grassland",45.1
 ```
@@ -82,7 +82,7 @@ DEP02,"grassland",45.1
 **`hoplite_recordings_metadata.csv`**
 
 ```csv
-file_id,mic_type
+recording,mic_type
 DEP01/rec001.wav,"MicA"
 DEP01/rec002.wav,"MicB"
 DEP02/rec001.wav,"MicA"

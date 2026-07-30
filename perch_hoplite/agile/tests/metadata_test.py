@@ -114,6 +114,23 @@ class MetadataTest(absltest.TestCase):
     self.assertEqual({}, md.get_deployment_metadata('dep_a'))
     self.assertEqual({}, md.get_recording_metadata('rec_a'))
 
+  def test_deployment_not_in_description(self):
+    # Overwrite description file without 'deployment' column description
+    with open(self.desc_path, 'w') as f:
+      f.write(
+          'field_name,metadata_level,type,description\n'
+          'habitat,deployment,str,Habitat type\n'
+          'recording,recording,str,Recording name\n'
+      )
+    md = metadata.AgileMetadata.from_directory(self.tempdir)
+    self.assertLen(md.deployment_metadata, 2)
+    self.assertLen(md.recording_metadata, 2)
+    # Check that deployment fields are parsed even if not in description df
+    self.assertEqual(
+        md.get_deployment_metadata('dep_a'),
+        {'deployment': 'dep_a', 'habitat': 'forest'},
+    )
+
   def test_missing_deployment_file(self):
     os.remove(self.dep_path)
     md = metadata.AgileMetadata.from_directory(self.tempdir)

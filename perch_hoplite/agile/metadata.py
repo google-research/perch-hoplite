@@ -136,6 +136,7 @@ class AgileMetadata:
 
     # If no description, then no metadata to process. Return early.
     if description_df is None or description_df.empty:
+      print('No metadata description provided. Returning empty AgileMetadata.')
       return cls(
           deployment_metadata=deployment_metadata,
           recording_metadata=recording_metadata,
@@ -143,6 +144,7 @@ class AgileMetadata:
           fields=fields,
       )
 
+    # Parse metadata field descriptions.
     for _, row in description_df.iterrows():
       fields[row.field_name] = MetadataField(
           field_name=row.field_name,
@@ -151,13 +153,33 @@ class AgileMetadata:
           description=row.description if 'description' in row else '',
       )
 
+    # Add deployment and recording fields if not in description.
+    if 'deployment' not in fields:
+      fields['deployment'] = MetadataField(
+          field_name='deployment',
+          metadata_level='deployment',
+          dtype='str',
+      )
+    fields['deployment'].metadata_level = 'deployment'
+    if 'recording' not in fields:
+      fields['recording'] = MetadataField(
+          field_name='recording',
+          metadata_level='recording',
+          dtype='str',
+      )
+    fields['recording'].metadata_level = 'recording'
+
     deployment_df = (
         deployment_df if deployment_df is not None else pd.DataFrame()
     )
     recording_df = recording_df if recording_df is not None else pd.DataFrame()
 
     # Deployment metadata handling.
-    if 'deployment' in deployment_df.columns:
+    if not deployment_df.empty and 'deployment' not in deployment_df.columns:
+      raise ValueError(
+          'Deployment metadata provided but deployment column missing.'
+      )
+    elif not deployment_df.empty:
       deployment_fields = [
           f for f, v in fields.items() if v.metadata_level == 'deployment'
       ]
@@ -168,13 +190,13 @@ class AgileMetadata:
       deployment_metadata = {
           r['deployment']: r for r in deployment_df.to_dict(orient='records')
       }
-    elif not deployment_df.empty:
-      raise ValueError(
-          'Deployment metadata provided but deployment column missing.'
-      )
 
     # Recording metadata handling.
-    if 'recording' in recording_df.columns:
+    if not recording_df.empty and 'recording' not in recording_df.columns:
+      raise ValueError(
+          'Recording metadata provided but recording column missing.'
+      )
+    elif not recording_df.empty:
       recording_fields = [
           f for f, v in fields.items() if v.metadata_level == 'recording'
       ]
@@ -185,10 +207,6 @@ class AgileMetadata:
       recording_metadata = {
           r['recording']: r for r in recording_df.to_dict(orient='records')
       }
-    elif not recording_df.empty:
-      raise ValueError(
-          'Recording metadata provided but recording column missing.'
-      )
 
     return cls(
         deployment_metadata=deployment_metadata,

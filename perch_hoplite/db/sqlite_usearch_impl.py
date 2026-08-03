@@ -752,7 +752,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   def commit(self) -> None:
     """Commit any pending transactions to the database."""
     self.db.commit()
-    if hasattr(self._thread_local, 'cursor') and self._thread_local.cursor is not None:
+    if getattr(self._thread_local, 'cursor', None) is not None:
       self._thread_local.cursor.close()
       self._thread_local.cursor = None
     if self._ui_updated:
@@ -762,7 +762,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   def rollback(self) -> None:
     """Rollback any pending transactions to the database."""
     self.db.rollback()
-    if hasattr(self._thread_local, 'cursor') and self._thread_local.cursor is not None:
+    if getattr(self._thread_local, 'cursor', None) is not None:
       self._thread_local.cursor.close()
       self._thread_local.cursor = None
 
@@ -780,7 +780,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     Returns:
       A sqlite3.Cursor instance that is local to the current thread.
     """
-    if not hasattr(self._thread_local, 'cursor') or self._thread_local.cursor is None:
+    if getattr(self._thread_local, 'cursor', None) is None:
       self._thread_local.cursor = self.db.cursor()
     return self._thread_local.cursor
 

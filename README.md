@@ -49,6 +49,7 @@ This repository consists of four sub-libraries:
   be used in the agile modeling workflow.
 * `taxonomy` – A database of taxonomic information, especially for handling
   conversions between the various bird taxonomies.
+* `geofence` - Tooling for building a species checklist for a location.
 
 Each sub-library has its own documentation.
 

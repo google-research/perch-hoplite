@@ -20,7 +20,6 @@ import shutil
 import sqlite3
 import tempfile
 
-from absl import logging
 from etils import epath
 from perch_hoplite import path_utils
 from perch_hoplite.taxonomy import namespace
@@ -76,62 +75,9 @@ class NamespaceDbTest(parameterized.TestCase):
     self.assertEqual(got_cl.namespace, 'ebird2021')
     self.assertEqual(got_cl.classes, ('amecro', 'amegfi', 'amered', 'amerob'))
 
-  def test_namespace_class_list_closure(self):
-    # Ensure that all classes in class lists appear in their namespace.
+  def test_validate_db(self):
     db = namespace_db.load_db()
-
-    all_missing_classes = set()
-    for list_name, class_list in db.class_lists.items():
-      missing_classes = set()
-      namespace_ = db.namespaces[class_list.namespace]
-      for cl in class_list.classes:
-        if cl not in namespace_.classes:
-          missing_classes.add(cl)
-          all_missing_classes.add(cl)
-      if missing_classes:
-        logging.warning(
-            'The classes %s in class list %s did not appear in namespace %s.',
-            missing_classes,
-            list_name,
-            class_list.namespace,
-        )
-      missing_classes.discard('unknown')
-    all_missing_classes.discard('unknown')
-    self.assertEmpty(all_missing_classes)
-
-  def test_namespace_mapping_closure(self):
-    # Ensure that all classes in mappings appear in their namespace.
-    db = namespace_db.load_db()
-
-    all_missing_classes = set()
-    for mapping_name, mapping in db.mappings.items():
-      missing_source_classes = set()
-      missing_target_classes = set()
-      source_namespace = db.namespaces[mapping.source_namespace]
-      target_namespace = db.namespaces[mapping.target_namespace]
-      for source_cl, target_cl in mapping.mapped_pairs.items():
-        if source_cl not in source_namespace.classes:
-          missing_source_classes.add(source_cl)
-          all_missing_classes.add(source_cl)
-        if target_cl not in target_namespace.classes:
-          missing_target_classes.add(target_cl)
-          all_missing_classes.add(target_cl)
-      if missing_source_classes:
-        logging.warning(
-            'The classes %s in mapping %s did not appear in namespace %s.',
-            missing_source_classes,
-            mapping_name,
-            source_namespace.name,
-        )
-      if missing_target_classes:
-        logging.warning(
-            'The classes %s in mapping %s did not appear in namespace %s.',
-            missing_target_classes,
-            mapping_name,
-            target_namespace.name,
-        )
-      missing_target_classes.discard('unknown')
-    self.assertEmpty(all_missing_classes)
+    namespace_db.validate_taxonomy_database(db)
 
   def test_taxonomic_mappings(self):
     # Ensure that all ebird2021 species appear in taxonomic mappings.

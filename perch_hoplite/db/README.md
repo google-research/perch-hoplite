@@ -33,9 +33,9 @@ implementation, however, may make slight adjustments to it for performance
 reasons (e.g. the SQLite+USearch database stores embedding vectors into USearch,
 basically splitting the `windows` table below into 2 different data structures).
 For simplicity, though, you should think of your embeddings and associated
-metadata in terms of these 4 different concepts: __deployments__, __recordings__,
-__windows__ and __annotations__. Also, hoplite-specific metadata is stored in a
-separate table called __hoplite_metadata__.
+metadata in terms of these 4 different concepts: __deployments__,
+__recordings__, __windows__ and __annotations__. Also, hoplite-specific metadata
+is stored in a separate table called __hoplite_metadata__.
 
 ```mermaid
 erDiagram

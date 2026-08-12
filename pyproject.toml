@@ -2,7 +2,7 @@
 # Project metadata. Available keys are documented at:
 # https://packaging.python.org/en/latest/specifications/declaring-project-metadata
 name = "perch-hoplite"
-version = "1.0.2"
+version = "1.0.4"
 description = "Tooling for agile modeling on large machine perception embedding databases."
 readme = "README.md"
 requires-python = ">=3.10,<3.15"
@@ -33,6 +33,8 @@ dependencies = [
     "pandas[gcp]>=2.1.1,<3.0.0",
     "scipy>=1.8.0,<2.0",
     "usearch>=2.17,<3.0",
+    "s2geometry>=0.14.0",
+    "geopandas>=1.1.4",
 ]
 
 [project.optional-dependencies]

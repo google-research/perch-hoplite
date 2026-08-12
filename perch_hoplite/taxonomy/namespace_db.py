@@ -22,13 +22,16 @@ Database Schema Design:
 1. strings: A unique registry of all text values (labels, namespace names,
    etc.) loaded into the database, mapped to auto-incrementing integer uids to
    avoid duplicating strings.
-2. namespaces: Stores basic namespace entities.
-3. namespace_strings: Join table associating a namespace with a set of label
-   string UIDs. This models namespaces structurally as sets of integers.
-4. class_lists & class_list_strings: Stores class list metadata and their
-   ordered sequence of label string UIDs (ordering preserved via idx column).
-5. mappings & mapping_pairs: Stores conversion mappings from a source
-   namespace to a target namespace, along with mapped pairs override records.
+2. namespaces: Stores basic namespace entities, mapping names to a set of class
+   label string uids. To avoid duplicate string entries and keep space footprint
+   small, the class uids are serialized into a compressed BLOB.
+3. class_lists: Stores class list metadata (name, namespace_name) and their
+   ordered sequence of classes, serialized as a compressed BLOB of label
+   string uids.
+4. mappings: Stores conversion mappings from a source namespace to a target
+   namespace, along with is_default flag and parallel source/target uid lists
+   (as compressed BLOBs) representing override mapped pairs (excluding
+   identity mappings).
 
 Algebraic Operations & Notation:
 - Set Arithmetic: The Namespace class implements set union (+) and set
@@ -42,8 +45,8 @@ Extended Identity:
 - Mappings have a default boolean flag. If True (or if evaluated as a default
   mapping), any shared items x in the intersection of the source and target
   namespaces will map to themselves by default (m(x) = x) without needing to
-  be explicitly recorded as mappings. Explicit entries in mapping_pairs override
-  this behavior.
+  be explicitly recorded as mappings. Explicit entries in mappings (stored
+  as source_uids and target_uids BLOBs) override this behavior.
 """
 
 import collections.abc
@@ -53,7 +56,9 @@ import os
 import re
 import sqlite3
 import typing
+import zlib
 
+import numpy as np
 from perch_hoplite import path_utils
 from perch_hoplite.taxonomy import namespace
 
@@ -121,24 +126,15 @@ def create_tables(conn: sqlite3.Connection) -> None:
   cursor.execute("""
   CREATE TABLE IF NOT EXISTS strings (
       uid INTEGER PRIMARY KEY AUTOINCREMENT,
-      value TEXT UNIQUE
+      value TEXT
   );
   """)
 
   cursor.execute("""
   CREATE TABLE IF NOT EXISTS namespaces (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT UNIQUE
-  );
-  """)
-
-  cursor.execute("""
-  CREATE TABLE IF NOT EXISTS namespace_strings (
-      namespace_id INTEGER,
-      string_uid INTEGER,
-      PRIMARY KEY (namespace_id, string_uid),
-      FOREIGN KEY (namespace_id) REFERENCES namespaces(id) ON DELETE CASCADE,
-      FOREIGN KEY (string_uid) REFERENCES strings(uid) ON DELETE CASCADE
+      name TEXT UNIQUE,
+      classes_uids BLOB
   );
   """)
 
@@ -146,24 +142,9 @@ def create_tables(conn: sqlite3.Connection) -> None:
   CREATE TABLE IF NOT EXISTS class_lists (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT UNIQUE,
-      namespace_name TEXT
+      namespace_name TEXT,
+      classes_uids BLOB
   );
-  """)
-
-  cursor.execute("""
-  CREATE TABLE IF NOT EXISTS class_list_strings (
-      class_list_id INTEGER,
-      string_uid INTEGER,
-      idx INTEGER,
-      PRIMARY KEY (class_list_id, idx),
-      FOREIGN KEY (class_list_id) REFERENCES class_lists(id) ON DELETE CASCADE,
-      FOREIGN KEY (string_uid) REFERENCES strings(uid) ON DELETE CASCADE
-  );
-  """)
-
-  cursor.execute("""
-  CREATE UNIQUE INDEX IF NOT EXISTS idx_class_list_strings_uid
-  ON class_list_strings (class_list_id, string_uid);
   """)
 
   cursor.execute("""
@@ -172,19 +153,9 @@ def create_tables(conn: sqlite3.Connection) -> None:
       name TEXT UNIQUE,
       source_namespace_name TEXT,
       target_namespace_name TEXT,
-      is_default INTEGER DEFAULT 0
-  );
-  """)
-
-  cursor.execute("""
-  CREATE TABLE IF NOT EXISTS mapping_pairs (
-      mapping_id INTEGER,
-      source_string_uid INTEGER,
-      target_string_uid INTEGER,
-      PRIMARY KEY (mapping_id, source_string_uid),
-      FOREIGN KEY (mapping_id) REFERENCES mappings(id) ON DELETE CASCADE,
-      FOREIGN KEY (source_string_uid) REFERENCES strings(uid) ON DELETE CASCADE,
-      FOREIGN KEY (target_string_uid) REFERENCES strings(uid) ON DELETE CASCADE
+      is_default INTEGER DEFAULT 0,
+      source_uids BLOB,
+      target_uids BLOB
   );
   """)
   conn.commit()
@@ -197,6 +168,9 @@ def get_or_insert_strings(
   if not values:
     return {}
   cursor = conn.cursor()
+  cursor.execute(
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_strings_value ON strings(value);"
+  )
   unique_values = list(set(values))
 
   chunk_size = 500
@@ -298,6 +272,43 @@ def parse_namespace_expression(
   return result
 
 
+def serialize_uids(uids: typing.Any) -> bytes:
+  """Serializes a numpy array of UIDs to bytes with dtype compression and zlib."""
+  uids = np.asarray(uids)
+  if uids.size == 0:
+    return b""
+  max_val = np.max(uids)
+  if max_val < 256:
+    dtype = np.uint8
+    label = 0
+  elif max_val < 65536:
+    dtype = np.uint16
+    label = 1
+  else:
+    dtype = np.uint32
+    label = 2
+  raw_bytes = bytes([label]) + uids.astype(dtype).tobytes()
+  return zlib.compress(raw_bytes)
+
+
+def deserialize_uids(blob: bytes, reshape_to_2d: bool = False) -> np.ndarray:
+  """Deserializes UIDs from bytes, detecting the correct dtype."""
+  if not blob:
+    return np.array([], dtype=np.int32)
+  decompressed = zlib.decompress(blob)
+  label = decompressed[0]
+  if label == 0:
+    dtype = np.uint8
+  elif label == 1:
+    dtype = np.uint16
+  else:
+    dtype = np.uint32
+  uids = np.frombuffer(decompressed[1:], dtype=dtype)
+  if reshape_to_2d:
+    return uids.reshape(2, -1)
+  return uids
+
+
 class SQLiteNamespacesDict(collections.abc.MutableMapping):
   """Dictionary-like proxy for namespaces in SQLite."""
 
@@ -326,21 +337,25 @@ class SQLiteNamespacesDict(collections.abc.MutableMapping):
         ) from e
 
     cursor = self._db.conn.cursor()
-    cursor.execute("SELECT id FROM namespaces WHERE name = ?", (key,))
+    cursor.execute("SELECT classes_uids FROM namespaces WHERE name = ?", (key,))
     row = cursor.fetchone()
     if row is None:
       raise KeyError(key)
-    ns_id = row[0]
+    classes_uids_blob = row[0]
+    if not classes_uids_blob:
+      return namespace.Namespace(classes=frozenset())
 
-    cursor.execute(
-        """
-      SELECT s.value FROM strings s
-      JOIN namespace_strings ns ON s.uid = ns.string_uid
-      WHERE ns.namespace_id = ?
-    """,
-        (ns_id,),
-    )
-    classes = [r[0] for r in cursor.fetchall()]
+    uids = deserialize_uids(classes_uids_blob)
+    if len(uids) < 1000:
+      placeholders = ",".join("?" for _ in uids)
+      cursor.execute(
+          f"SELECT value FROM strings WHERE uid IN ({placeholders})",
+          [int(x) for x in uids],
+      )
+      classes = [r[0] for r in cursor.fetchall()]
+    else:
+      uid_to_str = self._db.get_uid_to_str()
+      classes = [uid_to_str[uid] for uid in uids if uid in uid_to_str]
     return namespace.Namespace(classes=frozenset(classes))
 
   def __setitem__(self, key: str, value: namespace.Namespace) -> None:
@@ -350,18 +365,17 @@ class SQLiteNamespacesDict(collections.abc.MutableMapping):
       raise ValueError("Cannot write to an algebraic namespace name")
 
     cursor = self._db.conn.cursor()
-    cursor.execute("DELETE FROM namespaces WHERE name = ?", (key,))
-    cursor.execute("INSERT INTO namespaces (name) VALUES (?)", (key,))
-    ns_id = cursor.lastrowid
-
     classes = list(value.classes)
-    uids = get_or_insert_strings(self._db.conn, classes)
+    uids_dict = get_or_insert_strings(self._db.conn, classes)
+    uids = np.array([uids_dict[cls] for cls in classes], dtype=np.int32)
+    classes_uids_blob = serialize_uids(uids)
 
-    cursor.executemany(
-        "INSERT INTO namespace_strings (namespace_id, string_uid) VALUES"
-        " (?, ?)",
-        [(ns_id, uids[cls]) for cls in classes],
+    cursor.execute("DELETE FROM namespaces WHERE name = ?", (key,))
+    cursor.execute(
+        "INSERT INTO namespaces (name, classes_uids) VALUES (?, ?)",
+        (key, classes_uids_blob),
     )
+    self._db.clear_string_caches()
     self._db.conn.commit()
 
   def __delitem__(self, key: str) -> None:
@@ -416,44 +430,46 @@ class SQLiteClassListsDict(collections.abc.MutableMapping):
   def __getitem__(self, key: str) -> namespace.ClassList:
     cursor = self._db.conn.cursor()
     cursor.execute(
-        "SELECT id, namespace_name FROM class_lists WHERE name = ?", (key,)
+        "SELECT id, namespace_name, classes_uids "
+        "FROM class_lists WHERE name = ?",
+        (key,),
     )
     row = cursor.fetchone()
     if row is None:
       raise KeyError(key)
-    cl_id, ns_name = row
-
-    cursor.execute(
-        """
-      SELECT s.value FROM strings s
-      JOIN class_list_strings cls ON s.uid = cls.string_uid
-      WHERE cls.class_list_id = ?
-      ORDER BY cls.idx
-    """,
-        (cl_id,),
-    )
-    classes = tuple(r[0] for r in cursor.fetchall())
+    _, ns_name, blob = row
+    if not blob:
+      return namespace.ClassList(namespace=ns_name, classes=())
+    uids = deserialize_uids(blob)
+    if len(uids) < 1000:
+      placeholders = ",".join("?" for _ in uids)
+      cursor.execute(
+          f"SELECT uid, value FROM strings WHERE uid IN ({placeholders})",
+          [int(x) for x in uids],
+      )
+      uid_to_str = {uid: val for uid, val in cursor.fetchall()}
+      classes = tuple(uid_to_str[uid] for uid in uids if uid in uid_to_str)
+    else:
+      uid_to_str = self._db.get_uid_to_str()
+      classes = tuple(uid_to_str[uid] for uid in uids if uid in uid_to_str)
     return namespace.ClassList(namespace=ns_name, classes=classes)
 
   def __setitem__(self, key: str, value: namespace.ClassList) -> None:
     if not isinstance(value, namespace.ClassList):
       raise TypeError("Value must be a ClassList object")
     cursor = self._db.conn.cursor()
+    classes = list(value.classes)
+    uids_dict = get_or_insert_strings(self._db.conn, classes)
+    uids = np.array([uids_dict[cls] for cls in classes], dtype=np.int32)
+    classes_uids_blob = serialize_uids(uids)
+
     cursor.execute("DELETE FROM class_lists WHERE name = ?", (key,))
     cursor.execute(
-        "INSERT INTO class_lists (name, namespace_name) VALUES (?, ?)",
-        (key, value.namespace),
-    )
-    cl_id = cursor.lastrowid
-
-    classes = list(value.classes)
-    uids = get_or_insert_strings(self._db.conn, classes)
-
-    cursor.executemany(
-        "INSERT INTO class_list_strings (class_list_id, string_uid, idx) VALUES"
+        "INSERT INTO class_lists (name, namespace_name, classes_uids) VALUES"
         " (?, ?, ?)",
-        [(cl_id, uids[cls], idx) for idx, cls in enumerate(classes)],
+        (key, value.namespace, classes_uids_blob),
     )
+    self._db.clear_string_caches()
     self._db.conn.commit()
 
   def __delitem__(self, key: str) -> None:
@@ -500,26 +516,39 @@ class SQLiteMappingsDict(collections.abc.MutableMapping):
   def __getitem__(self, key: str) -> namespace.Mapping:
     cursor = self._db.conn.cursor()
     cursor.execute(
-        "SELECT id, source_namespace_name, target_namespace_name, is_default"
-        " FROM mappings WHERE name = ?",
+        "SELECT id, source_namespace_name, target_namespace_name,"
+        " is_default, source_uids, target_uids FROM mappings WHERE name = ?",
         (key,),
     )
     row = cursor.fetchone()
     if row is None:
       raise KeyError(key)
-    mapping_id, src_ns_name, tgt_ns_name, is_default = row
+    _, src_ns_name, tgt_ns_name, is_default, src_blob, tgt_blob = row
 
-    cursor.execute(
-        """
-      SELECT s_src.value, s_tgt.value
-      FROM mapping_pairs mp
-      JOIN strings s_src ON mp.source_string_uid = s_src.uid
-      JOIN strings s_tgt ON mp.target_string_uid = s_tgt.uid
-      WHERE mp.mapping_id = ?
-    """,
-        (mapping_id,),
-    )
-    explicit_pairs = dict(cursor.fetchall())
+    if not src_blob or not tgt_blob:
+      explicit_pairs = {}
+    else:
+      src_uids = deserialize_uids(src_blob)
+      tgt_uids = deserialize_uids(tgt_blob)
+      all_uids = list(
+          set(int(x) for x in src_uids) | set(int(x) for x in tgt_uids)
+      )
+
+      if len(all_uids) < 1000:
+        placeholders = ",".join("?" for _ in all_uids)
+        cursor.execute(
+            f"SELECT uid, value FROM strings WHERE uid IN ({placeholders})",
+            all_uids,
+        )
+        uid_to_str = {uid: val for uid, val in cursor.fetchall()}
+      else:
+        uid_to_str = self._db.get_uid_to_str()
+
+      explicit_pairs = {
+          uid_to_str[src]: uid_to_str[tgt]
+          for src, tgt in zip(src_uids, tgt_uids)
+          if src in uid_to_str and tgt in uid_to_str
+      }
 
     try:
       src_ns = self._db.namespaces[src_ns_name]
@@ -542,18 +571,6 @@ class SQLiteMappingsDict(collections.abc.MutableMapping):
     if not isinstance(value, namespace.Mapping):
       raise TypeError("Value must be a Mapping object")
     cursor = self._db.conn.cursor()
-    cursor.execute("DELETE FROM mappings WHERE name = ?", (key,))
-    cursor.execute(
-        "INSERT INTO mappings (name, source_namespace_name,"
-        " target_namespace_name, is_default) VALUES (?, ?, ?, ?)",
-        (
-            key,
-            value.source_namespace,
-            value.target_namespace,
-            int(value.default),
-        ),
-    )
-    mapping_id = cursor.lastrowid
 
     try:
       src_ns = self._db.namespaces[value.source_namespace]
@@ -569,16 +586,32 @@ class SQLiteMappingsDict(collections.abc.MutableMapping):
       pairs_to_save[k] = v
 
     all_strings = list(pairs_to_save.keys()) + list(pairs_to_save.values())
-    uids = get_or_insert_strings(self._db.conn, all_strings)
+    uids_dict = get_or_insert_strings(self._db.conn, all_strings)
 
-    cursor.executemany(
-        "INSERT INTO mapping_pairs (mapping_id, source_string_uid,"
-        " target_string_uid) VALUES (?, ?, ?)",
-        [
-            (mapping_id, uids[src], uids[tgt])
-            for src, tgt in pairs_to_save.items()
-        ],
+    if pairs_to_save:
+      src_uids = [uids_dict[src] for src in pairs_to_save.keys()]
+      tgt_uids = [uids_dict[tgt] for tgt in pairs_to_save.values()]
+      source_uids_blob = serialize_uids(src_uids)
+      target_uids_blob = serialize_uids(tgt_uids)
+    else:
+      source_uids_blob = None
+      target_uids_blob = None
+
+    cursor.execute("DELETE FROM mappings WHERE name = ?", (key,))
+    cursor.execute(
+        "INSERT INTO mappings (name, source_namespace_name,"
+        " target_namespace_name, is_default, source_uids, target_uids)"
+        " VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            key,
+            value.source_namespace,
+            value.target_namespace,
+            int(value.default),
+            source_uids_blob,
+            target_uids_blob,
+        ),
     )
+    self._db.clear_string_caches()
     self._db.conn.commit()
 
   def __delitem__(self, key: str) -> None:
@@ -616,6 +649,7 @@ class TaxonomyDatabase:
       class_lists: dict[str, namespace.ClassList] | None = None,
       mappings: dict[str, namespace.Mapping] | None = None,
   ):
+    self._uid_to_str_cache = None
     if isinstance(conn, sqlite3.Connection):
       self.conn = conn
     else:
@@ -643,6 +677,16 @@ class TaxonomyDatabase:
     self.class_lists = SQLiteClassListsDict(self)
     self.mappings = SQLiteMappingsDict(self)
 
+  def get_uid_to_str(self) -> dict[int, str]:
+    if self._uid_to_str_cache is None:
+      cursor = self.conn.cursor()
+      cursor.execute("SELECT uid, value FROM strings")
+      self._uid_to_str_cache = {uid: val for uid, val in cursor.fetchall()}
+    return self._uid_to_str_cache
+
+  def clear_string_caches(self):
+    self._uid_to_str_cache = None
+
 
 def validate_taxonomy_database(taxonomy_database: TaxonomyDatabase) -> None:
   """Validate the taxonomy database.
@@ -653,39 +697,93 @@ def validate_taxonomy_database(taxonomy_database: TaxonomyDatabase) -> None:
     taxonomy_database: A taxonomy database structure to validate.
 
   Raises:
-    ValueError or KeyError when the database is invalid.
+    ValueError: if a class list or mapping contains a class not in the
+      namespace.
+    KeyError: if a namespace or class list is not found.
   """
-  namespaces = taxonomy_database.namespaces
+  cursor = taxonomy_database.conn.cursor()
 
-  for mapping_name, mapping in taxonomy_database.mappings.items():
-    if (
-        set(mapping.mapped_pairs.keys())
-        - namespaces[mapping.source_namespace].classes
-    ):
-      raise ValueError(
-          f"Mapping {mapping_name} contains a source class not in "
-          f"the namespace ({mapping.source_namespace})."
+  # 1. Fetch unknown_uid if it exists
+  cursor.execute(
+      "SELECT uid FROM strings WHERE value = ?", (namespace.UNKNOWN_LABEL,)
+  )
+  row = cursor.fetchone()
+  unknown_uid = row[0] if row else None
+
+  # 2. Fetch all base namespaces name -> classes_uids set
+  cursor.execute("SELECT name, classes_uids FROM namespaces")
+  namespaces_uids = {}
+  for name, blob in cursor.fetchall():
+    uids = deserialize_uids(blob)
+    namespaces_uids[name] = set(int(x) for x in uids)
+
+  # 3. Validate Mappings
+  cursor.execute(
+      "SELECT name, source_namespace_name, target_namespace_name,"
+      " source_uids, target_uids FROM mappings"
+  )
+  for m_name, src_ns_name, tgt_ns_name, src_blob, tgt_blob in cursor.fetchall():
+    if src_ns_name not in namespaces_uids:
+      raise KeyError(
+          f"Source namespace {src_ns_name} for mapping {m_name} not found."
       )
-    if (
-        set(mapping.mapped_pairs.values())
-        - namespaces[mapping.target_namespace].classes
-    ):
-      raise ValueError(
-          f"Mapping {mapping_name} contains a target class not in "
-          f"the namespace ({mapping.target_namespace})."
+    if tgt_ns_name not in namespaces_uids:
+      raise KeyError(
+          f"Target namespace {tgt_ns_name} for mapping {m_name} not found."
       )
 
-  for class_name, class_list in taxonomy_database.class_lists.items():
-    classes = class_list.classes
-    if (
-        set(classes)
-        - namespaces[class_list.namespace].classes
-        - {namespace.UNKNOWN_LABEL}
-    ):
-      raise ValueError(
-          f"ClassList {class_name} contains a class not in "
-          f"the namespace ({class_list.namespace})."
-      )
+    src_set = namespaces_uids[src_ns_name]
+    tgt_set = namespaces_uids[tgt_ns_name]
+
+    if src_blob and tgt_blob:
+      src_uids = set(int(x) for x in deserialize_uids(src_blob))
+      tgt_uids = set(int(x) for x in deserialize_uids(tgt_blob))
+
+      missing_src = src_uids - src_set
+      if missing_src:
+        raise ValueError(
+            f"Mapping {m_name} contains a source class not in "
+            f"the namespace ({src_ns_name})."
+        )
+
+      missing_tgt = tgt_uids - tgt_set
+      if missing_tgt:
+        raise ValueError(
+            f"Mapping {m_name} contains a target class not in "
+            f"the namespace ({tgt_ns_name})."
+        )
+
+  # 4. Validate Class Lists
+  cursor.execute("SELECT name, namespace_name, classes_uids FROM class_lists")
+  for cl_name, ns_name, blob in cursor.fetchall():
+    if "+" in ns_name or "-" in ns_name:
+      # Fallback for algebraic namespaces
+      ns_classes = taxonomy_database.namespaces[ns_name].classes
+      cl_classes = taxonomy_database.class_lists[cl_name].classes
+      if set(cl_classes) - ns_classes - {namespace.UNKNOWN_LABEL}:
+        raise ValueError(
+            f"ClassList {cl_name} contains a class not in "
+            f"the namespace ({ns_name})."
+        )
+    else:
+      if ns_name not in namespaces_uids:
+        raise KeyError(
+            f"Namespace {ns_name} for class list {cl_name} not found."
+        )
+
+      ns_set = namespaces_uids[ns_name]
+      if blob:
+        cl_uids = set(int(x) for x in deserialize_uids(blob))
+        allowed_uids = ns_set
+        if unknown_uid is not None:
+          allowed_uids = allowed_uids | {unknown_uid}
+
+        missing_cl = cl_uids - allowed_uids
+        if missing_cl:
+          raise ValueError(
+              f"ClassList {cl_name} contains a class not in "
+              f"the namespace ({ns_name})."
+          )
 
 
 def dump_db(taxonomy_database: TaxonomyDatabase, validate: bool = True) -> str:

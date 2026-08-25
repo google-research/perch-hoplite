@@ -620,7 +620,7 @@ class CallDensityATB(CallDensityEstimator):
       value_bounds = bin_bounds
       quantile_bounds = []
       for value_bound in value_bounds:
-        quantile_bounds.extend((logits < value_bound).sum() / len(logits))
+        quantile_bounds.extend((logits < value_bound).sum() / len(logits))  # pyrefly: ignore[bad-argument-type]
       quantile_bounds.append(1.0)
     else:
       raise ValueError(f'Unknown binning strategy: {binning_strategy}')

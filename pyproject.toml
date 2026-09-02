@@ -59,6 +59,7 @@ build-backend = "hatchling.build"
 include = [
     "agile",
     "db",
+    "geofence",
     "taxonomy",
     "zoo",
     "audio_io.py",

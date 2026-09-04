@@ -44,16 +44,20 @@ class AudioDatasetIngestor:
       logits_key: str | None = None,
       logits_idxes: tuple[int, ...] | None = None,
       embedding_dim: int | None = None,
+      model_config: embed.ModelConfig | None = None,
   ):
     """Ingest the dataset into a hoplite DB."""
-    preset_info = model_configs.get_preset_model_config(model_key)
-    db_model_config = embed.ModelConfig(
-        model_key=preset_info.model_key,
-        embedding_dim=preset_info.embedding_dim,
-        model_config=preset_info.model_config,
-        logits_key=logits_key,
-        logits_idxes=logits_idxes,
-    )
+    if model_config is None:
+      preset_info = model_configs.get_preset_model_config(model_key)
+      db_model_config = embed.ModelConfig(
+          model_key=preset_info.model_key,
+          embedding_dim=preset_info.embedding_dim,
+          model_config=preset_info.model_config,
+          logits_key=logits_key,
+          logits_idxes=logits_idxes,
+      )
+    else:
+      db_model_config = model_config
 
     if isinstance(base_path, str):
       base_path = epath.Path(base_path)
@@ -85,7 +89,7 @@ class AudioDatasetIngestor:
           ' embedding_dim.'
       )
     elif embedding_dim is None:
-      embedding_dim = preset_info.embedding_dim
+      embedding_dim = db_model_config.embedding_dim
     db = db_loader.create_new_usearch_db(
         db_path=output_path, embedding_dim=embedding_dim  # pyrefly: ignore[bad-argument-type]
     )

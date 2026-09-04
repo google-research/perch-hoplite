@@ -24,6 +24,7 @@ import itertools
 import json
 import re
 import sqlite3
+import threading
 from typing import Any, Literal
 
 from absl import logging
@@ -407,7 +408,9 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   _embedding_dtype: type[Any] = np.float16
 
   # Dynamic state.
-  _cursor: sqlite3.Cursor | None = None
+  _thread_local: threading.local = dataclasses.field(
+      default_factory=threading.local
+  )
   _ui_loaded: bool = False
   _ui_updated: bool = False
   _readonly: bool = False
@@ -653,6 +656,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
         ui=ui,
         _embedding_dim=usearch_cfg.embedding_dim,
         _embedding_dtype=usearch_cfg.dtype,
+        _thread_local=threading.local(),
         _ui_loaded=ui_in_memory,
         _ui_updated=ui_in_memory,
         _readonly=readonly,
@@ -748,9 +752,9 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   def commit(self) -> None:
     """Commit any pending transactions to the database."""
     self.db.commit()
-    if self._cursor is not None:
-      self._cursor.close()
-      self._cursor = None
+    if getattr(self._thread_local, 'cursor', None) is not None:
+      self._thread_local.cursor.close()
+      self._thread_local.cursor = None
     if self._ui_updated:
       self.ui.save()
       self._ui_updated = False
@@ -758,19 +762,27 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   def rollback(self) -> None:
     """Rollback any pending transactions to the database."""
     self.db.rollback()
-    if self._cursor is not None:
-      self._cursor.close()
-      self._cursor = None
+    if getattr(self._thread_local, 'cursor', None) is not None:
+      self._thread_local.cursor.close()
+      self._thread_local.cursor = None
 
   def thread_split(self) -> 'SQLiteUSearchDB':
     """Get a new instance of the SQLite DB."""
     return self.create(self.db_path.as_posix(), readonly=self._readonly)
 
   def _get_cursor(self) -> sqlite3.Cursor:
-    """Get the SQLite cursor."""
-    if self._cursor is None:
-      self._cursor = self.db.cursor()
-    return self._cursor
+    """Get a thread-local SQLite cursor.
+
+    Each thread gets its own cursor to avoid issues with SQLite's
+    thread-safety model. If the current thread doesn't have a cursor yet,
+    one is created.
+
+    Returns:
+      A sqlite3.Cursor instance that is local to the current thread.
+    """
+    if getattr(self._thread_local, 'cursor', None) is None:
+      self._thread_local.cursor = self.db.cursor()
+    return self._thread_local.cursor
 
   def insert_metadata(self, key: str, value: config_dict.ConfigDict) -> None:
     """Insert a key-value pair into the metadata table."""

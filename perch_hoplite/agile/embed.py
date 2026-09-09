@@ -526,7 +526,7 @@ class EmbedWorker:
                 s.file_id, deployment_id, s.dataset_name
             )
             recording_ids.append(recording_id)
-          if all(r in new_recordings for r in recording_ids):
+          if all(r in new_recordings for r in recording_ids):  # pyrefly: ignore[not-iterable]
             dupe_strategy = 'allow'
           else:
             dupe_strategy = handle_duplicates

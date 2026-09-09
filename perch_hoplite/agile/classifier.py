@@ -171,9 +171,9 @@ def eval_classifier(
       'roc_auc_individual': rocs['individual'],
       'cmap': cmaps['macro'],
       'cmap_individual': cmaps['individual'],
-      'eval_ids': got_ids,
-      'eval_preds': pred_logits,
-      'eval_labels': true_labels,
+      'eval_ids': got_ids,  # pyrefly: ignore[bad-assignment]
+      'eval_preds': pred_logits,  # pyrefly: ignore[bad-assignment]
+      'eval_labels': true_labels,  # pyrefly: ignore[bad-assignment]
   }
 
 

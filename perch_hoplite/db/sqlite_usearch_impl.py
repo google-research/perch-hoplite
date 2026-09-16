@@ -411,6 +411,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   _thread_local: threading.local = dataclasses.field(
       default_factory=threading.local
   )
+  _lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
   _ui_loaded: bool = False
   _ui_updated: bool = False
   _readonly: bool = False
@@ -657,6 +658,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
         _embedding_dim=usearch_cfg.embedding_dim,
         _embedding_dtype=usearch_cfg.dtype,
         _thread_local=threading.local(),
+        _lock=threading.Lock(),
         _ui_loaded=ui_in_memory,
         _ui_updated=ui_in_memory,
         _readonly=readonly,
@@ -750,21 +752,33 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     return self._extra_table_columns
 
   def commit(self) -> None:
-    """Commit any pending transactions to the database."""
-    self.db.commit()
-    if getattr(self._thread_local, 'cursor', None) is not None:
-      self._thread_local.cursor.close()
-      self._thread_local.cursor = None
-    if self._ui_updated:
-      self.ui.save()
-      self._ui_updated = False
+    """Commit any pending transactions to the database.
+
+    Acquires a lock to serialize access to the shared database connection,
+    ensuring that commit/rollback operations from different threads do not
+    interfere with each other's in-flight transactions.
+    """
+    with self._lock:
+      self.db.commit()
+      if getattr(self._thread_local, 'cursor', None) is not None:
+        self._thread_local.cursor.close()
+        self._thread_local.cursor = None
+      if self._ui_updated:
+        self.ui.save()
+        self._ui_updated = False
 
   def rollback(self) -> None:
-    """Rollback any pending transactions to the database."""
-    self.db.rollback()
-    if getattr(self._thread_local, 'cursor', None) is not None:
-      self._thread_local.cursor.close()
-      self._thread_local.cursor = None
+    """Rollback any pending transactions to the database.
+
+    Acquires a lock to serialize access to the shared database connection,
+    ensuring that commit/rollback operations from different threads do not
+    interfere with each other's in-flight transactions.
+    """
+    with self._lock:
+      self.db.rollback()
+      if getattr(self._thread_local, 'cursor', None) is not None:
+        self._thread_local.cursor.close()
+        self._thread_local.cursor = None
 
   def thread_split(self) -> 'SQLiteUSearchDB':
     """Get a new instance of the SQLite DB."""

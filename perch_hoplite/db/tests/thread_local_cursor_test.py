@@ -177,5 +177,116 @@ class ThreadLocalCursorTest(absltest.TestCase):
     self.assertLen(ids, 14)
 
 
+  def test_concurrent_commits_are_serialized(self):
+    """Verify that concurrent commits do not interfere with each other.
+
+    Multiple threads insert data and commit concurrently. The lock ensures
+    that commits are serialized, preventing one thread's commit from
+    interfering with another thread's in-flight transaction.
+    """
+    db = test_utils.make_db(
+        self.tempdir, 'sqlite_usearch', 10, np.random.default_rng(42), EMBEDDING_SIZE
+    )
+    dep_id = db.insert_deployment(name='cc_dep', project='cc_project')
+    rec_id = db.insert_recording(filename='cc.wav', deployment_id=dep_id)
+    db.commit()
+
+    errors = []
+    num_threads = 8
+    barrier = threading.Barrier(num_threads)
+
+    def worker(thread_idx):
+      try:
+        barrier.wait()
+        for j in range(5):
+          embedding = np.random.default_rng(thread_idx * 100 + j).normal(
+              size=EMBEDDING_SIZE
+          ).astype(np.float16)
+          wid = db.insert_window(
+              recording_id=rec_id,
+              offsets=[float(thread_idx * 10.0 + j), float(thread_idx * 10.0 + j + 1.0)],
+              embedding=embedding,
+          )
+          db.commit()
+          got = db.get_window(wid)
+          assert got.id == wid
+      except Exception as e:
+        errors.append(e)
+
+    threads = [
+        threading.Thread(target=worker, args=(i,), name=f'cc_{i}')
+        for i in range(num_threads)
+    ]
+    for t in threads:
+      t.start()
+    for t in threads:
+      t.join(timeout=30)
+
+    self.assertEmpty(errors)
+    ids = db.match_window_ids()
+    self.assertLen(ids, 10 + num_threads * 5)
+
+  def test_concurrent_commit_and_rollback(self):
+    """Verify that concurrent commits and rollbacks are serialized.
+
+    Some threads commit while others rollback. The lock ensures no
+    cross-thread interference on the shared connection.
+    """
+    db = test_utils.make_db(
+        self.tempdir, 'sqlite_usearch', 10, np.random.default_rng(42), EMBEDDING_SIZE
+    )
+    dep_id = db.insert_deployment(name='cr_dep2', project='cr_project2')
+    rec_id = db.insert_recording(filename='cr.wav', deployment_id=dep_id)
+    db.commit()
+
+    errors = []
+    num_threads = 6
+    barrier = threading.Barrier(num_threads)
+
+    def committer(thread_idx):
+      try:
+        barrier.wait()
+        for j in range(3):
+          embedding = np.random.default_rng(thread_idx * 100 + j).normal(
+              size=EMBEDDING_SIZE
+          ).astype(np.float16)
+          db.insert_window(
+              recording_id=rec_id,
+              offsets=[float(thread_idx * 10.0 + j), float(thread_idx * 10.0 + j + 1.0)],
+              embedding=embedding,
+          )
+          db.commit()
+      except Exception as e:
+        errors.append(e)
+
+    def rollbacker(thread_idx):
+      try:
+        barrier.wait()
+        for _ in range(3):
+          embedding = np.random.default_rng(thread_idx * 100).normal(
+              size=EMBEDDING_SIZE
+          ).astype(np.float16)
+          db.insert_window(
+              recording_id=rec_id,
+              offsets=[900.0, 901.0],
+              embedding=embedding,
+          )
+          db.rollback()
+      except Exception as e:
+        errors.append(e)
+
+    threads = []
+    for i in range(num_threads // 2):
+      threads.append(threading.Thread(target=committer, args=(i,), name=f'c_{i}'))
+      threads.append(threading.Thread(target=rollbacker, args=(i + 3,), name=f'r_{i}'))
+
+    for t in threads:
+      t.start()
+    for t in threads:
+      t.join(timeout=30)
+
+    self.assertEmpty(errors)
+
+
 if __name__ == '__main__':
   absltest.main()

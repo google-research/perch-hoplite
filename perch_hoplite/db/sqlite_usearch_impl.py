@@ -623,11 +623,11 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       raise ValueError('No usearch_cfg was found in DB and none was provided.')
 
     # Create the USearch index.
-    usearch_dtype = USEARCH_DTYPES[usearch_cfg.dtype]
+    usearch_dtype = USEARCH_DTYPES[usearch_cfg.dtype]  # pyrefly: ignore[missing-attribute]
     index_path = db_path / UINDEX_FILENAME  # pyrefly: ignore[unsupported-operation]
     if index_path.exists():
       ui = uindex.Index(
-          ndim=usearch_cfg.embedding_dim,
+          ndim=usearch_cfg.embedding_dim,  # pyrefly: ignore[missing-attribute]
           path=index_path,
           view=True,
       )
@@ -636,10 +636,10 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       if readonly:
         raise FileNotFoundError(f'USearch index not found at {index_path}')
       ui = uindex.Index(
-          ndim=usearch_cfg.embedding_dim,
-          metric=getattr(uindex.MetricKind, usearch_cfg.metric_name),
-          expansion_add=usearch_cfg.expansion_add,
-          expansion_search=usearch_cfg.expansion_search,
+          ndim=usearch_cfg.embedding_dim,  # pyrefly: ignore[missing-attribute]
+          metric=getattr(uindex.MetricKind, usearch_cfg.metric_name),  # pyrefly: ignore[missing-attribute]
+          expansion_add=usearch_cfg.expansion_add,  # pyrefly: ignore[missing-attribute]
+          expansion_search=usearch_cfg.expansion_search,  # pyrefly: ignore[missing-attribute]
           dtype=usearch_dtype,
           path=index_path,
           view=False,
@@ -651,8 +651,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
         db_path=db_path,  # pyrefly: ignore[bad-argument-type]
         db=db,
         ui=ui,
-        _embedding_dim=usearch_cfg.embedding_dim,
-        _embedding_dtype=usearch_cfg.dtype,
+        _embedding_dim=usearch_cfg.embedding_dim,  # pyrefly: ignore[missing-attribute]
+        _embedding_dtype=usearch_cfg.dtype,  # pyrefly: ignore[missing-attribute]
         _ui_loaded=ui_in_memory,
         _ui_updated=ui_in_memory,
         _readonly=readonly,
@@ -660,7 +660,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
     metadata_already_present = USEARCH_CONFIG_KEY in metadata
     if not readonly and not metadata_already_present:
-      hoplite_db.insert_metadata(USEARCH_CONFIG_KEY, usearch_cfg)
+      hoplite_db.insert_metadata(USEARCH_CONFIG_KEY, usearch_cfg)  # pyrefly: ignore[bad-argument-type]
       hoplite_db.commit()
 
     return hoplite_db

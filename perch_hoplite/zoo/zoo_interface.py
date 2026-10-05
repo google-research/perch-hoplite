@@ -227,7 +227,7 @@ class LogitsOutputHead:
         logits = logits.numpy()
     else:
       raise ValueError('could not figure out how to call wrapped model.')
-    return logits  # pyrefly: ignore[bad-return]
+    return logits
 
   def save_model(self, output_path: str, embeddings_path: str):
     """Write a SavedModel and metadata to disk."""

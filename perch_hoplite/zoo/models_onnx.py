@@ -31,7 +31,7 @@ from perch_hoplite.zoo import zoo_interface
 
 def _require_onnxruntime():
   try:
-    import onnxruntime  # pylint: disable=g-import-not-at-top  # pytype: disable=import-error
+    import onnxruntime  # pylint: disable=g-import-not-at-top  # pyrefly: ignore[missing-import]
   except ImportError as e:
     raise ImportError(
         '`onnxruntime` is required to run OnnxModel but is not installed. '

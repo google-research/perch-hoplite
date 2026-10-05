@@ -120,9 +120,9 @@ def hinge_loss(
 ) -> tf.Tensor:
   """Weighted SVM hinge loss."""
   # Convert multihot to +/- 1 labels.
-  y_true = 2 * y_true - 1  # pyrefly: ignore[bad-assignment, unsupported-operation]
-  weights = (1.0 - is_labeled_mask) * weak_neg_weight + is_labeled_mask  # pyrefly: ignore[unsupported-operation]
-  raw_hinge_loss = tf.maximum(0, 1 - y_true * logits)  # pyrefly: ignore[unsupported-operation]
+  y_true = 2 * y_true - 1
+  weights = (1.0 - is_labeled_mask) * weak_neg_weight + is_labeled_mask
+  raw_hinge_loss = tf.maximum(0, 1 - y_true * logits)
   return tf.reduce_mean(raw_hinge_loss * weights)
 
 
@@ -165,7 +165,7 @@ def eval_classifier(
   cmaps = metrics.cmap(
       logits=pred_logits, labels=true_labels, sample_threshold=1
   )
-  return {  # pyrefly: ignore[bad-return]
+  return {
       'top1_acc': top1,
       'roc_auc': rocs['macro'],
       'roc_auc_individual': rocs['individual'],
@@ -202,7 +202,7 @@ def train_linear_classifier(
   @tf.function
   def train_step(y_true, embeddings, is_labeled_mask):
     with tf.GradientTape() as tape:
-      logits = lin_model(embeddings, training=True)  # pyrefly: ignore[not-callable]
+      logits = lin_model(embeddings, training=True)
       loss = loss_fn(y_true, logits, is_labeled_mask, weak_neg_weight)
       loss = tf.reduce_mean(loss)
     grads = tape.gradient(loss, lin_model.trainable_variables)

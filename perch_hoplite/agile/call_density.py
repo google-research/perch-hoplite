@@ -124,7 +124,7 @@ class ValidationSet:
           datatypes.LabelType.NEGATIVE,
       ]:
         scores.append(ex.score)
-        labels.append(ex.label_type.value)  # pytype: disable=attribute-error
+        labels.append(ex.label_type.value)
         weights.append(ex.sample_weight)
     return np.array(scores), np.array(labels), np.array(weights)
 

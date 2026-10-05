@@ -34,6 +34,9 @@ def brute_search_worker_fn(emb_ids: np.ndarray, state: dict[str, Any]):
   name = threading.current_thread().name
   embeddings = state[name + 'db'].get_embeddings_batch(emb_ids)
   scores = state['score_fn'](embeddings, state['query_embedding'])
+  if scores.shape[0] <= state['search_list_size']:
+    # Short final batches may contain fewer candidates than requested.
+    return emb_ids, scores
   top_locs = np.argpartition(scores, state['search_list_size'], axis=-1)
   return emb_ids[top_locs], scores[top_locs]
 

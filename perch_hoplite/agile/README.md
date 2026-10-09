@@ -148,3 +148,35 @@ The notebooks provided are:
 *   **`99_migrate_db.ipynb`**: A utility notebook for migrating Hoplite
     databases created with `perch-hoplite < 1.0` to the format used by
     `perch-hoplite >= 1.0`.
+## Embedding progress
+
+`EmbedWorker.embed_dataset()` now displays a progress **count and rate per
+source segment** when run in an interactive terminal. Audio files may be split
+into many segments and the total is not known until the lazy iterator finishes,
+so the indicator intentionally does not display a misleading percentage.
+
+For programs and notebooks, provide a callback to `process_all()` or
+`embed_dataset()`:
+
+```python
+from perch_hoplite.agile import embed
+
+def on_progress(status: embed.EmbedProgress):
+  print(
+      f"{status.processed_segments} segments processed, "
+      f"{status.embedded_segments} embedded, "
+      f"{status.generated_embeddings} vectors generated; "
+      f"last: {status.source_id.file_id} @ {status.source_id.offset_s:.1f}s"
+  )
+
+# After constructing the EmbedWorker with your audio sources, model, and DB:
+worker.process_all(progress_callback=on_progress)
+```
+
+Callbacks run on the calling thread **after** each segment is processed and
+its generated embeddings are passed to the database writer. Skipped/unreadable
+segments also advance `processed_segments`, without increasing
+`embedded_segments` or `generated_embeddings`. These are counts of generated
+embeddings, not necessarily new rows written when duplicate-handling policies
+skip existing database records. Callback exceptions propagate to the caller;
+they are not silently discarded.

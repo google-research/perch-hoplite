@@ -17,6 +17,8 @@
 
 from collections.abc import Iterator
 import dataclasses
+import fnmatch
+import pathlib
 
 from etils import epath
 from ml_collections import config_dict
@@ -54,7 +56,13 @@ class AudioSourceConfig(datatypes.HopliteConfig):
   Attributes:
     dataset_name: Name of the dataset. (Must be unique for each set of files.)
     base_path: Root directory of the dataset.
-    file_glob: Glob pattern for the audio files.
+    file_glob: Glob pattern for the audio files. Required unless file_paths is
+      specified instead.
+    file_paths: Optional explicit list of files inside base_path, relative to
+      base_path or as absolute paths. Duplicates are processed only once.
+    recursive: If True, discover files in subdirectories recursively, with
+      file_glob matching their basenames or relative paths. Opt-in since a
+      recursive search can be expensive on remote filesystems.
     min_audio_len_s: Minimum audio length to process.
     target_sample_rate_hz: Target sample rate for audio. If -2, use the
       embedding model's declared sample rate. If -1, use the file's native
@@ -65,11 +73,23 @@ class AudioSourceConfig(datatypes.HopliteConfig):
 
   dataset_name: str
   base_path: str
-  file_glob: str
+  file_glob: str | None = None
   min_audio_len_s: float = 1.0
   target_sample_rate_hz: int = -2
   shard_len_s: float | None = 60.0
   max_shards_per_file: int | None = None
+  file_paths: tuple[str, ...] | None = None
+  recursive: bool = False
+
+  def __post_init__(self):
+    if (self.file_glob is None) == (self.file_paths is None):
+      raise ValueError('Specify exactly one of file_glob or file_paths.')
+    if self.file_paths is not None:
+      if isinstance(self.file_paths, str):
+        raise TypeError('file_paths must be a sequence, not a string.')
+      self.file_paths = tuple(self.file_paths)
+    if self.recursive and self.file_paths is not None:
+      raise ValueError('recursive is only valid with file_glob.')
 
   def is_compatible(self, other: 'AudioSourceConfig') -> bool:
     """Returns True if other is expected to produce comparable embeddings."""
@@ -166,7 +186,44 @@ class AudioSources(datatypes.HopliteConfig):
         continue
       # If base_path is a URL, the posix path may not match the original string.
       base_path = epath.Path(glob.base_path)
-      filepaths = tuple(base_path.glob(glob.file_glob))
+      if glob.file_paths is not None:
+        filepaths = []
+        for filename in dict.fromkeys(glob.file_paths):
+          filepath = epath.Path(filename)
+          if '..' in filepath.parts:
+            raise ValueError(f'Audio path must stay under base_path: {filename}')
+          if not filepath.is_absolute() and '://' not in filename:
+            filepath = base_path / filename
+          try:
+            relative_path = filepath.relative_to(base_path)
+          except ValueError as exc:
+            raise ValueError(
+                f'Audio path must stay under base_path: {filename}'
+            ) from exc
+          if relative_path == pathlib.PurePosixPath('.') or not filepath.is_file():
+            raise FileNotFoundError(f'Audio file not found: {filename}')
+          filepaths.append(filepath)
+      elif glob.recursive:
+        filepaths = []
+        directories = [base_path]
+        while directories:
+          for filepath in directories.pop().iterdir():
+            if filepath.is_dir():
+              directories.append(filepath)
+              continue
+            relative_path = pathlib.PurePosixPath(
+                filepath.relative_to(base_path).as_posix()
+            )
+            pattern = glob.file_glob.removeprefix('**/')
+            if filepath.is_file() and (
+                fnmatch.fnmatch(relative_path.name, pattern)
+                if '/' not in pattern
+                else relative_path.match(pattern)
+            ):
+              filepaths.append(filepath)
+        filepaths.sort(key=lambda p: p.as_posix())
+      else:
+        filepaths = tuple(base_path.glob(glob.file_glob))
       shard_len_s = glob.shard_len_s
       max_shards_per_file = glob.max_shards_per_file
 

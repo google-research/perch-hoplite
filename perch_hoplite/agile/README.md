@@ -27,6 +27,38 @@ including the deployment directory (e.g., `deployment_A/recording01.wav`).
 This relative path serves as the recording identifier (represented by the
 `recording` column) for recordings when linking metadata or annotations.
 
+## Selecting audio files
+
+`AudioSourceConfig` supports three modes:
+
+```python
+from perch_hoplite.agile import source_info
+
+# Existing behavior: search only the selected directory level.
+one_level = source_info.AudioSourceConfig(
+    dataset_name='recordings', base_path='/data/audio', file_glob='*.wav'
+)
+
+# Opt-in recursive search below the dataset root.
+recursive = source_info.AudioSourceConfig(
+    dataset_name='recordings', base_path='/data/audio',
+    file_glob='*.wav', recursive=True,
+)
+
+# An explicit deduplicated list, preserving selection order.
+selected = source_info.AudioSourceConfig(
+    dataset_name='recordings', base_path='/data/audio',
+    file_paths=('site_a/first.wav', 'site_b/second.wav'),
+)
+```
+
+Specify **either** `file_glob` or `file_paths`, not both. Explicit paths must
+point to existing files within `base_path` (absolute paths under that root
+are also accepted). The usual sharding, metadata, and embedding logic is
+unchanged. A recursive scan may be expensive for remote storage because it
+traverses directories explicitly; use `file_paths` when an external index has
+already identified the desired recordings.
+
 ## Adding metadata to the Hoplite Database
 
 The Agile embedding pipeline supports adding metadata to deployments and

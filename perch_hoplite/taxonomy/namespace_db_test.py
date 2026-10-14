@@ -78,6 +78,13 @@ class NamespaceDbTest(parameterized.TestCase):
   def test_validate_db(self):
     db = namespace_db.load_db()
     namespace_db.validate_taxonomy_database(db)
+    self.assertIn('wildlife_insights', db.namespaces)
+    self.assertIn('wildlife_insights_to_inat2026_species', db.mappings)
+    wi_map = db.mappings['wildlife_insights_to_inat2026_species'].mapped_pairs
+    self.assertEqual(wi_map.get('Martes martes'), 'Martes martes')
+    self.assertEqual(wi_map.get('Martes'), 'Martes martes')
+    self.assertEqual(wi_map.get('Vulpes'), 'Vulpes vulpes')
+    self.assertEqual(wi_map.get('Sapajus macrocephalus'), 'Sapajus apella')
 
   def test_taxonomic_mappings(self):
     # Ensure that all ebird2021 species appear in taxonomic mappings.

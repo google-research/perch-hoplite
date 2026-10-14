@@ -15,6 +15,9 @@
 
 """Tests for mass-embedding functionality."""
 
+import importlib.util
+from unittest import mock
+
 from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.zoo import model_configs
@@ -22,6 +25,11 @@ from perch_hoplite.zoo import zoo_interface
 
 from absl.testing import absltest
 from absl.testing import parameterized
+
+_HAS_TORCH = (
+    importlib.util.find_spec('torch') is not None
+    and importlib.util.find_spec('transformers') is not None
+)
 
 
 class ZooTest(parameterized.TestCase):
@@ -128,6 +136,73 @@ class ZooTest(parameterized.TestCase):
     head.model_type = 'unrecognized_type'
     with self.assertRaisesRegex(ValueError, 'Unknown model type'):
       head.save_model('/dev/null', '')
+
+  @absltest.skipIf(not _HAS_TORCH, 'torch and transformers not installed')
+  @mock.patch('transformers.ClapProcessor.from_pretrained')
+  @mock.patch('transformers.ClapModel.from_pretrained')
+  def test_clap_model(self, mock_model_load, mock_processor_load):
+    mock_processor = mock.Mock()
+    mock_model = mock.Mock()
+    mock_processor_load.return_value = mock_processor
+    mock_model_load.return_value = mock_model
+
+    # Mock processor output
+    mock_tensor = mock.Mock()
+    mock_processor.return_value = {'input_features': mock_tensor}
+    mock_tensor.to.return_value = mock_tensor
+    # Mock model output: get_audio_features
+    mock_audio_embeds = mock.Mock()
+    mock_model.get_audio_features.return_value = mock_audio_embeds
+    mock_audio_embeds.to.return_value.numpy.return_value = np.zeros([2, 512])
+
+    config = config_dict.ConfigDict({
+        'sample_rate': 48000,
+        'model_path': 'placeholder_path',
+    })
+    model = model_configs.get_model_class('clap').from_config(config)
+    fake_audio = np.zeros([2, 48000 * 5], dtype=np.float32)
+    outputs = model.batch_embed(fake_audio)
+
+    self.assertEqual(outputs.embeddings.shape[0], 2)
+    self.assertEqual(outputs.embeddings.shape[1], 1)
+    self.assertEqual(outputs.embeddings.shape[2], 1)
+    self.assertEqual(outputs.embeddings.shape[3], 512)
+
+  @absltest.skipIf(not _HAS_TORCH, 'torch and transformers not installed')
+  @mock.patch('transformers.CLIPProcessor.from_pretrained')
+  @mock.patch('transformers.CLIPModel.from_pretrained')
+  @mock.patch('librosa.feature.melspectrogram')
+  def test_clip_model(self, mock_melspec, mock_model_load, mock_processor_load):
+    mock_processor = mock.Mock()
+    mock_model = mock.Mock()
+    mock_processor_load.return_value = mock_processor
+    mock_model_load.return_value = mock_model
+
+    # Mock librosa melspectrogram
+    mock_melspec.return_value = np.zeros([128, 500])
+
+    # Mock processor output
+    mock_tensor = mock.Mock()
+    mock_processor.return_value = {'pixel_values': mock_tensor}
+    mock_tensor.to.return_value = mock_tensor
+
+    # Mock model output: get_image_features
+    mock_image_embeds = mock.Mock()
+    mock_model.get_image_features.return_value = mock_image_embeds
+    mock_image_embeds.to.return_value.numpy.return_value = np.zeros([2, 512])
+
+    config = config_dict.ConfigDict({
+        'sample_rate': 32000,
+        'model_path': 'placeholder_path',
+    })
+    model = model_configs.get_model_class('clip').from_config(config)
+    fake_audio = np.zeros([2, 32000 * 5], dtype=np.float32)
+    outputs = model.batch_embed(fake_audio)
+
+    self.assertEqual(outputs.embeddings.shape[0], 2)
+    self.assertEqual(outputs.embeddings.shape[1], 1)
+    self.assertEqual(outputs.embeddings.shape[2], 1)
+    self.assertEqual(outputs.embeddings.shape[3], 512)
 
 
 if __name__ == '__main__':

@@ -51,6 +51,11 @@ tf-cuda = [
 onnx = [
     "onnxruntime>=1.20",
 ]
+torch = [
+    "pillow>=10.0",
+    "torch>=2.0",
+    "transformers>=4.40",
+]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

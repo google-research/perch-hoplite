@@ -46,6 +46,8 @@ class ModelConfigName(enum.Enum):
   BIRDAVES = 'birdaves'
   PLACEHOLDER = 'placeholder'
   PERCH_V2_ONNX = 'perch_v2_onnx'
+  CLAP = 'clap'
+  CLIP = 'clip'
 
 
 @dataclasses.dataclass
@@ -129,6 +131,12 @@ def get_model_class(model_key: str) -> type[zoo_interface.EmbeddingModel]:
   elif model_key == 'perch_v2_onnx':
     module = importlib.import_module('perch_hoplite.zoo.models_onnx')
     return _get_obj(module, 'PerchV2OnnxModel')
+  elif model_key == 'clap':
+    module = importlib.import_module('perch_hoplite.zoo.hf_models')
+    return _get_obj(module, 'CLAPModel')
+  elif model_key == 'clip':
+    module = importlib.import_module('perch_hoplite.zoo.hf_models')
+    return _get_obj(module, 'CLIPModel')
   else:
     raise ValueError(f'Unknown model key: {model_key}')
 
@@ -324,6 +332,16 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_class = _get_obj(module, 'HandcraftedFeaturesModel')
     model_config = model_class.beans_baseline_config()
     embedding_dim = 80
+  elif preset_name == ModelConfigName.CLAP:
+    model_key = 'clap'
+    embedding_dim = 512
+    model_config.sample_rate = 48000
+    model_config.model_path = 'laion/clap-htsat-unfused'
+  elif preset_name == ModelConfigName.CLIP:
+    model_key = 'clip'
+    embedding_dim = 512
+    model_config.sample_rate = 32000
+    model_config.model_path = 'openai/clip-vit-base-patch32'
   else:
     raise ValueError('Unsupported model preset: %s' % preset_name)
   return PresetInfo(

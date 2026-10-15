@@ -15,6 +15,7 @@
 
 """Functionality for embedding audio examples."""
 
+from collections.abc import Callable
 from concurrent import futures
 import dataclasses
 import datetime
@@ -58,6 +59,24 @@ class ModelConfig(datatypes.HopliteConfig):
   model_config: config_dict.ConfigDict
   logits_key: str | None = None
   logits_idxes: tuple[int, ...] | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class EmbedProgress:
+  """Progress after processing one source segment (total may be unknown).
+
+  Attributes:
+    source_id: Most recently processed audio source segment.
+    processed_segments: Total attempted segments, including skipped segments.
+    embedded_segments: Segments that produced at least one model output.
+    generated_embeddings: Cumulative embedding vectors produced (not the
+      number inserted if duplicate handling skips existing windows).
+  """
+
+  source_id: source_info.SourceId
+  processed_segments: int
+  embedded_segments: int
+  generated_embeddings: int
 
 
 def worker_initializer(state):
@@ -481,23 +500,55 @@ class EmbedWorker:
       ] = 'error',
       target_dataset_name: str | None = None,
       new_recordings: set[int] | None = None,
+      progress_callback: Callable[[EmbedProgress], None] | None = None,
   ):
-    """Embed audio examples from the given dataset."""
+    """Embed audio, reporting progress per completed source segment.
+
+    Progress has no percentage since iterating sources (and splitting long
+    recordings into segments) is lazy. The optional callback runs on the
+    calling thread after each source finishes, including skipped segments.
+    """
     if self.timestamp_resolver is not None:
       if 'timestamp' not in self.db.get_extra_table_columns().get(
           'windows', {}
       ):
         self.db.add_extra_table_column('windows', 'timestamp', str)
     # Process all sources.
+    processed_segments = 0
+    embedded_segments = 0
+    generated_embeddings = 0
+
+    def report_progress(source_id, produced_embeddings: int | None):
+      nonlocal processed_segments, embedded_segments, generated_embeddings
+      processed_segments += 1
+      if produced_embeddings is not None:
+        embedded_segments += 1
+        generated_embeddings += produced_embeddings
+      progress_bar.update(1)
+      if progress_callback is not None:
+        progress_callback(
+            EmbedProgress(
+                source_id=source_id,
+                processed_segments=processed_segments,
+                embedded_segments=embedded_segments,
+                generated_embeddings=generated_embeddings,
+            )
+        )
+
     state = {}
     state['db'] = self.db
     state['worker'] = self
     state['new_recordings'] = new_recordings
-    with futures.ThreadPoolExecutor(
-        max_workers=self.audio_worker_threads,
-        initializer=worker_initializer,
-        initargs=(state,),
-    ) as executor:
+    with (
+        futures.ThreadPoolExecutor(
+            max_workers=self.audio_worker_threads,
+            initializer=worker_initializer,
+            initargs=(state,),
+        ) as executor,
+        tqdm.tqdm(
+            desc='Embedding audio', unit='segment', disable=None
+        ) as progress_bar,
+    ):
       source_iterator = self.audio_sources.iterate_all_sources(
           target_dataset_name
       )
@@ -514,8 +565,9 @@ class EmbedWorker:
             recording_timestamps,
         )
         # TODO(tomdenton): Consider using a db writer thread to avoid blocking.
-        for result in got:
+        for source_id, result in zip(source_ids_batch, got):
           if result is None:
+            report_progress(source_id, None)
             continue
           recording_ids = []
           for s in result[0]:
@@ -550,6 +602,7 @@ class EmbedWorker:
               embeddings_batch,
               handle_duplicates=dupe_strategy,
           )
+          report_progress(source_id, len(embs_list))
     self.db.commit()
 
   def get_sample_rate_hz(self, source_id: source_info.SourceId) -> int:
@@ -625,8 +678,9 @@ class EmbedWorker:
       target_dataset_name: str | None = None,
       batch_size=32,
       handle_duplicates='error',
+      progress_callback: Callable[[EmbedProgress], None] | None = None,
   ):
-    """Process all audio examples."""
+    """Process all audio examples, optionally reporting per-segment progress."""
 
     # Update model config and audio sources in the database.
     self.update_configs()
@@ -647,5 +701,6 @@ class EmbedWorker:
         handle_duplicates=handle_duplicates,  # pyrefly: ignore[bad-argument-type]
         target_dataset_name=target_dataset_name,
         new_recordings=new_recordings,
+        progress_callback=progress_callback,
     )
     self.db.commit()

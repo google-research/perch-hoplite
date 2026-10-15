@@ -17,6 +17,7 @@
 
 from typing import Protocol, overload, runtime_checkable
 import numpy as np
+from scipy.spatial import distance
 
 
 @runtime_checkable
@@ -86,16 +87,17 @@ def numpy_neg_euclidean(
     data: np.ndarray, query: np.ndarray
 ) -> float | np.ndarray:
   """Negative L2 distance allowing multiple queries."""
-  data_norms = np.linalg.norm(data, axis=-1)
-  if len(query.shape) > 1:
-    query_norms = np.linalg.norm(query, axis=-1)
-    dot_products = np.tensordot(data, query, axes=(-1, -1))
-    pairs = data_norms[:, np.newaxis] + query_norms[np.newaxis, :]
-    return -pairs + 2 * dot_products
+  if query.ndim == 1:
+    return -np.linalg.norm(data - query, axis=-1)
 
-  query_norm = np.linalg.norm(query)
-  dot_products = np.dot(data, query)
-  return -data_norms + 2 * dot_products + query_norm
+  # cdist computes pairwise differences without a data-by-query-by-dimension
+  # temporary or cancellation from subtracting squared vector norms.
+  distances = distance.cdist(
+      data.reshape(-1, data.shape[-1]),
+      query.reshape(-1, query.shape[-1]),
+      metric='euclidean',
+  )
+  return -distances.reshape(data.shape[:-1] + query.shape[:-1])
 
 
 def get_jax_dot():

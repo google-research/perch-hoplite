@@ -481,8 +481,20 @@ class EmbedWorker:
       ] = 'error',
       target_dataset_name: str | None = None,
       new_recordings: set[int] | None = None,
+      commit_every_n_batches: int | None = 1,
   ):
-    """Embed audio examples from the given dataset."""
+    """Embed audio examples from the given dataset.
+
+    Args:
+      batch_size: Number of source files submitted to workers at a time.
+      handle_duplicates: How to handle embeddings that already exist.
+      target_dataset_name: If set, only embed this dataset.
+      new_recordings: Recording ids inserted during the current ingest.
+      commit_every_n_batches: Commit after this many source batches. Set to
+        ``None`` to commit only after the full dataset.
+    """
+    if commit_every_n_batches is not None and commit_every_n_batches < 1:
+      raise ValueError('commit_every_n_batches must be positive or None.')
     if self.timestamp_resolver is not None:
       if 'timestamp' not in self.db.get_extra_table_columns().get(
           'windows', {}
@@ -501,7 +513,10 @@ class EmbedWorker:
       source_iterator = self.audio_sources.iterate_all_sources(
           target_dataset_name
       )
+      pending_batches = 0
+      saw_batch = False
       for source_ids_batch in batched(source_iterator, batch_size):
+        saw_batch = True
         recording_timestamps = [
             self.get_recording_timestamp(s.file_id, s.dataset_name)
             for s in source_ids_batch
@@ -550,7 +565,15 @@ class EmbedWorker:
               embeddings_batch,
               handle_duplicates=dupe_strategy,
           )
-    self.db.commit()
+        pending_batches += 1
+        if (
+            commit_every_n_batches is not None
+            and pending_batches >= commit_every_n_batches
+        ):
+          self.db.commit()
+          pending_batches = 0
+    if pending_batches or not saw_batch:
+      self.db.commit()
 
   def get_sample_rate_hz(self, source_id: source_info.SourceId) -> int:
     """Get the sample rate of the embedding model."""
@@ -625,8 +648,17 @@ class EmbedWorker:
       target_dataset_name: str | None = None,
       batch_size=32,
       handle_duplicates='error',
+      commit_every_n_batches: int | None = 1,
   ):
-    """Process all audio examples."""
+    """Process all audio examples.
+
+    Args:
+      target_dataset_name: If set, only process this dataset.
+      batch_size: Number of source files submitted to workers at a time.
+      handle_duplicates: How to handle records that already exist.
+      commit_every_n_batches: Commit embeddings after this many source batches.
+        Set to ``None`` to commit only after embedding the full dataset.
+    """
 
     # Update model config and audio sources in the database.
     self.update_configs()
@@ -647,5 +679,6 @@ class EmbedWorker:
         handle_duplicates=handle_duplicates,  # pyrefly: ignore[bad-argument-type]
         target_dataset_name=target_dataset_name,
         new_recordings=new_recordings,
+        commit_every_n_batches=commit_every_n_batches,
     )
     self.db.commit()

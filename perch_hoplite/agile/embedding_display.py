@@ -290,7 +290,7 @@ class EmbeddingDisplay:
 
     labels = []
     for lbl, w in self.widgets.items():
-      if w.value is None:  # uninitialized
+      if w.value is None:  # uninitialized  # pyrefly: ignore[missing-attribute]
         continue
       if w.value == datatypes.LabelType.UNCERTAIN and skip_uncertain:
         continue
@@ -315,7 +315,7 @@ class EmbeddingDisplay:
 
     labels = []
     for lbl, w in self.widgets.items():
-      if w.value is None:  # uninitialized
+      if w.value is None:  # uninitialized  # pyrefly: ignore[missing-attribute]
         continue
       if w.value == datatypes.LabelType.UNCERTAIN and skip_uncertain:
         continue

@@ -62,6 +62,9 @@ def load_audio_file(
     with filepath.open('rb') as f:
       sf = soundfile.SoundFile(file=f)
       audio = sf.read()
+      if len(audio.shape) == 2:
+        # Downstream ops expect mono audio, so reduce to mono.
+        audio = audio[:, 0]
       if target_sample_rate is not None:
         audio = librosa.resample(
             y=audio,

@@ -124,6 +124,9 @@ class HopliteDBInterface(abc.ABC):
   def rollback(self) -> None:
     """Rollback any pending transactions to the database."""
 
+  def close(self) -> None:
+    """Close any underlying database resources."""
+
   @abc.abstractmethod
   def thread_split(self) -> "HopliteDBInterface":
     """Get a new instance of the database with the same contents.

@@ -125,6 +125,10 @@ class MultiDBWrapper(interface.HopliteDBInterface):
     for db in self._dbs_list:
       db.rollback()
 
+  def close(self) -> None:
+    for db in self._dbs_list:
+      db.close()
+
   def thread_split(self) -> "MultiDBWrapper":
     return MultiDBWrapper(
         {name: db.thread_split() for name, db in self._dbs.items()}

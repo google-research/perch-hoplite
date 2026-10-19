@@ -27,14 +27,17 @@ from perch_hoplite.db import search_results
 
 def worker_initializer(state):
   name = threading.current_thread().name
-  state[name + 'db'] = state['db'].thread_split()
+  state['worker_dbs'][name] = state['db'].thread_split()
 
 
 def brute_search_worker_fn(emb_ids: np.ndarray, state: dict[str, Any]):
   name = threading.current_thread().name
-  embeddings = state[name + 'db'].get_embeddings_batch(emb_ids)
+  embeddings = state['worker_dbs'][name].get_embeddings_batch(emb_ids)
   scores = state['score_fn'](embeddings, state['query_embedding'])
-  top_locs = np.argpartition(scores, state['search_list_size'], axis=-1)
+  k = state['search_list_size']
+  if emb_ids.shape[0] <= k:
+    return emb_ids, scores
+  top_locs = np.argpartition(scores, -k, axis=-1)[-k:]
   return emb_ids[top_locs], scores[top_locs]
 
 
@@ -68,32 +71,38 @@ def threaded_brute_search(
   state = {}
   state['search_list_size'] = search_list_size
   state['db'] = db
+  state['worker_dbs'] = {}
   state['query_embedding'] = query_embedding
   state['score_fn'] = score_fn
 
+  ids = get_brute_search_ids(db, sample_size, rng_seed)
   results = search_results.TopKSearchResults(search_list_size)
   # Commit the DB, since we are about to create views in multiple threads.
   db.commit()
-  with concurrent.futures.ThreadPoolExecutor(
-      max_workers=max_workers,
-      initializer=worker_initializer,
-      initargs=(state,),
-  ) as executor:
-    ids = get_brute_search_ids(db, sample_size, rng_seed)
-    futures = []
-    for q in range(0, ids.shape[0], batch_size):
-      futures.append(
-          executor.submit(
-              brute_search_worker_fn, ids[q : q + batch_size], state
-          )
-      )
-    for f in futures:
-      idxes, scores = f.result()
-      for idx, score in zip(idxes, scores):
-        if not results.will_filter(idx, score):
-          results.update(
-              search_results.SearchResult(idx, score), force_insert=True
-          )
+  try:
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=max_workers,
+        initializer=worker_initializer,
+        initargs=(state,),
+    ) as executor:
+      futures = []
+      for q in range(0, ids.shape[0], batch_size):
+        futures.append(
+            executor.submit(
+                brute_search_worker_fn, ids[q : q + batch_size], state
+            )
+        )
+      for f in futures:
+        idxes, scores = f.result()
+        for idx, score in zip(idxes, scores):
+          if not results.will_filter(idx, score):
+            results.update(
+                search_results.SearchResult(idx, score), force_insert=True
+            )
+  finally:
+    for worker_db in state['worker_dbs'].values():
+      if worker_db is not db:
+        worker_db.close()
   return results
 
 

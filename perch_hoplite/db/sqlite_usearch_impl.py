@@ -608,6 +608,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     # Retrieve the metadata.
     # TODO(tomdenton): Check that `usearch_cfg` is consistent with the DB.
     metadata = cls._get_all_metadata(cursor)
+    cursor.close()
     if (
         USEARCH_CONFIG_KEY in metadata
         and usearch_cfg is not None
@@ -761,6 +762,13 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     if self._cursor is not None:
       self._cursor.close()
       self._cursor = None
+
+  def close(self) -> None:
+    """Close any underlying database resources."""
+    if self._cursor is not None:
+      self._cursor.close()
+      self._cursor = None
+    self.db.close()
 
   def thread_split(self) -> 'SQLiteUSearchDB':
     """Get a new instance of the SQLite DB."""

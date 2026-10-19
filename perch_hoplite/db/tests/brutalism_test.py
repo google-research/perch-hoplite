@@ -48,6 +48,7 @@ class BrutalismTest(parameterized.TestCase):
           None,
           0.5,
           128,
+          135,
       ),
   )
   def test_threaded_brute_search(self, db_type, sample_size):

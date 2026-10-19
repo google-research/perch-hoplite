@@ -86,16 +86,16 @@ def numpy_neg_euclidean(
     data: np.ndarray, query: np.ndarray
 ) -> float | np.ndarray:
   """Negative L2 distance allowing multiple queries."""
-  data_norms = np.linalg.norm(data, axis=-1)
+  data_norms = np.linalg.norm(data, axis=-1) ** 2
   if len(query.shape) > 1:
-    query_norms = np.linalg.norm(query, axis=-1)
+    query_norms = np.linalg.norm(query, axis=-1) ** 2
     dot_products = np.tensordot(data, query, axes=(-1, -1))
     pairs = data_norms[:, np.newaxis] + query_norms[np.newaxis, :]
     return -pairs + 2 * dot_products
 
-  query_norm = np.linalg.norm(query)
+  query_norm = np.linalg.norm(query) ** 2
   dot_products = np.dot(data, query)
-  return -data_norms + 2 * dot_products + query_norm
+  return -data_norms + 2 * dot_products - query_norm
 
 
 def get_jax_dot():

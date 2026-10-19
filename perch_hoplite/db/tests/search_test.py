@@ -19,6 +19,7 @@ import shutil
 import tempfile
 
 import numpy as np
+from perch_hoplite.db import score_functions
 from perch_hoplite.db.tests import test_utils
 
 from absl.testing import absltest
@@ -127,6 +128,59 @@ class SearchTest(parameterized.TestCase):
       self.assertLessEqual(result.sort_score, 1.0)
       # Since we targeted 0.5, the absolute difference should be small-ish.
       self.assertLess(abs(result.sort_score - target_score), 0.5)
+
+  def test_numpy_neg_euclidean(self):
+    rng = np.random.default_rng(42)
+    data = rng.normal(scale=2.0, size=(10, EMBEDDING_SIZE))
+    queries = rng.normal(scale=2.0, size=(3, EMBEDDING_SIZE))
+
+    # Distance from a vector to itself should be 0.0.
+    self.assertAlmostEqual(
+        score_functions.numpy_neg_euclidean(queries[0], queries[0]),
+        0.0,
+        places=5,
+    )
+
+    # Single query vs batched data.
+    single_scores = score_functions.numpy_neg_euclidean(data, queries[0])
+    expected_single = -np.sum((data - queries[0]) ** 2, axis=-1)
+    np.testing.assert_allclose(
+        single_scores, expected_single, rtol=1e-5, atol=1e-5
+    )
+
+    # Multiple queries vs batched data.
+    multi_scores = score_functions.numpy_neg_euclidean(data, queries)
+    expected_multi = -np.sum(
+        (data[:, np.newaxis, :] - queries[np.newaxis, :, :]) ** 2, axis=-1
+    )
+    np.testing.assert_allclose(
+        multi_scores, expected_multi, rtol=1e-5, atol=1e-5
+    )
+    np.testing.assert_allclose(
+        multi_scores[:, 0], single_scores, rtol=1e-5, atol=1e-5
+    )
+
+  @parameterized.parameters(*test_utils.DB_TYPES)
+  def test_exact_search_neg_euclidean(self, db_type):
+    rng = np.random.default_rng(42)
+    db = test_utils.make_db(self.tempdir, db_type, 100, rng, EMBEDDING_SIZE)
+
+    window_ids = db.match_window_ids()
+    target_id = window_ids[0]
+    target_embedding = db.get_embedding(target_id)
+
+    results = db.search(
+        target_embedding,
+        search_list_size=5,
+        approximate=False,
+        score_fn_name='neg_euclidean',
+    )
+
+    found_ids = [r.window_id for r in results]
+    self.assertIn(target_id, found_ids)
+    for result in results:
+      if result.window_id == target_id:
+        self.assertAlmostEqual(result.sort_score, 0.0, places=4)
 
 
 if __name__ == '__main__':

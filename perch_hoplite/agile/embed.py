@@ -481,6 +481,7 @@ class EmbedWorker:
       ] = 'error',
       target_dataset_name: str | None = None,
       new_recordings: set[int] | None = None,
+      commit_every_n_batches: int | None = 100,
   ):
     """Embed audio examples from the given dataset."""
     if self.timestamp_resolver is not None:
@@ -501,7 +502,9 @@ class EmbedWorker:
       source_iterator = self.audio_sources.iterate_all_sources(
           target_dataset_name
       )
-      for source_ids_batch in batched(source_iterator, batch_size):
+      for i, source_ids_batch in enumerate(
+          batched(source_iterator, batch_size), start=1
+      ):
         recording_timestamps = [
             self.get_recording_timestamp(s.file_id, s.dataset_name)
             for s in source_ids_batch
@@ -550,6 +553,8 @@ class EmbedWorker:
               embeddings_batch,
               handle_duplicates=dupe_strategy,
           )
+        if commit_every_n_batches and i % commit_every_n_batches == 0:
+          self.db.commit()
     self.db.commit()
 
   def get_sample_rate_hz(self, source_id: source_info.SourceId) -> int:
@@ -625,6 +630,7 @@ class EmbedWorker:
       target_dataset_name: str | None = None,
       batch_size=32,
       handle_duplicates='error',
+      commit_every_n_batches: int | None = 128,
   ):
     """Process all audio examples."""
 
@@ -647,5 +653,6 @@ class EmbedWorker:
         handle_duplicates=handle_duplicates,  # pyrefly: ignore[bad-argument-type]
         target_dataset_name=target_dataset_name,
         new_recordings=new_recordings,
+        commit_every_n_batches=commit_every_n_batches,
     )
     self.db.commit()

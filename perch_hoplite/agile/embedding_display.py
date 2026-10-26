@@ -212,7 +212,7 @@ class EmbeddingDisplay:
         icon=button_info['icon'],
         button_style=button_info['button_style'],
     )
-    button.value = self.init_label_type
+    button.value = self.init_label_type  # pyrefly: ignore[missing-attribute]
     button.on_click(button_callback)
     return button
 

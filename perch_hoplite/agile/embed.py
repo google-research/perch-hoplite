@@ -265,6 +265,16 @@ class EmbedWorker:
     self._deployment_map[(deployment_name, project_name)] = deployment_id
     return deployment_id
 
+  def _get_deployment_name(self, file_id: str, dataset_name: str) -> str:
+    """Gets deployment name from recording metadata or file_id."""
+    if dataset_name in self.metadata:
+      rec_md = self.metadata[dataset_name].get_recording_metadata(file_id)
+      if rec_md.get('deployment_name'):
+        return str(rec_md['deployment_name'])
+    if '/' in file_id:
+      return file_id.split('/')[0]
+    return dataset_name
+
   def get_recording_timestamp(
       self, filename: str, dataset_name: str
   ) -> datetime.datetime | None:
@@ -313,6 +323,7 @@ class EmbedWorker:
     md = self.metadata[dataset_name].get_recording_metadata(filename)
     md.pop('recording', None)
     md.pop('datetime', None)
+    md.pop('deployment_name', None)
     rec_datetime = self.get_recording_timestamp(filename, dataset_name)
     recording_id = self.db.insert_recording(
         filename=filename,
@@ -342,9 +353,8 @@ class EmbedWorker:
     # Gather unique deployments from sources.
     unique_deployments = set()
     for source in self.audio_sources.iterate_all_sources(target_dataset_name):
-      unique_deployments.add(
-          (source.deployment_name_from_file_id(), source.dataset_name)
-      )
+      depl_name = self._get_deployment_name(source.file_id, source.dataset_name)
+      unique_deployments.add((depl_name, source.dataset_name))
 
     # Create missing deployments in the database.
     for deployment_name, project_name in unique_deployments:
@@ -393,8 +403,9 @@ class EmbedWorker:
 
     new_recordings = set([])
     for source in self.audio_sources.iterate_all_sources(target_dataset_name):
+      depl_name = self._get_deployment_name(source.file_id, source.dataset_name)
       deployment_id = self._get_or_insert_deployment_id(
-          deployment_name=source.deployment_name_from_file_id(),
+          deployment_name=depl_name,
           project_name=source.dataset_name,
           error_on_insert=True,
       )
@@ -451,7 +462,7 @@ class EmbedWorker:
       for file_id, annotation_list in tqdm.tqdm(
           agile_md.annotations.items(), desc='Adding annotations'
       ):
-        depl_name = file_id.split('/')[0]
+        depl_name = self._get_deployment_name(file_id, dataset_name)
         if not depl_name:
           logging.warning(
               'Could not get deployment name from file_id %s, skipping.',
@@ -522,8 +533,9 @@ class EmbedWorker:
             continue
           recording_ids = []
           for s in result[0]:
+            depl_name = self._get_deployment_name(s.file_id, s.dataset_name)
             deployment_id = self._get_or_insert_deployment_id(
-                s.deployment_name_from_file_id(), s.dataset_name
+                depl_name, s.dataset_name
             )
             recording_id, _ = self._get_or_insert_recording_id(
                 s.file_id, deployment_id, s.dataset_name

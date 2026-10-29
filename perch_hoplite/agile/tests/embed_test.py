@@ -368,6 +368,74 @@ class DuplicateHandlingTest(absltest.TestCase):
     finally:
       shutil.rmtree(tempdir)
 
+  def test_deployment_from_recording_metadata(self):
+    tempdir = tempfile.mkdtemp()
+    try:
+      db = db_loader.create_new_usearch_db(
+          db_path=os.path.join(tempdir, 'test_db'), embedding_dim=32
+      )
+      test_utils.make_wav_files(
+          tempdir, ['audio'], ['rec1', 'rec2'], file_len_s=2.0
+      )
+      with open(
+          os.path.join(tempdir, 'hoplite_metadata_description.csv'), 'w'
+      ) as f:
+        f.write(
+            'field_name,metadata_level,type,description\n'
+            'deployment,deployment,str,Deployment identifier.\n'
+            'habitat,deployment,str,Habitat type.\n'
+            'recording,recording,str,Recording identifier.\n'
+            'deployment_name,recording,str,Deployment identifier.\n'
+        )
+      with open(
+          os.path.join(tempdir, 'hoplite_deployments_metadata.csv'), 'w'
+      ) as f:
+        f.write('deployment,habitat\nsite_a,forest\nsite_b,wetland\n')
+      with open(
+          os.path.join(tempdir, 'hoplite_recordings_metadata.csv'), 'w'
+      ) as f:
+        f.write(
+            'recording,deployment_name\n'
+            'audio/rec1_audio.wav,site_a\n'
+            'audio/rec2_audio.wav,site_b\n'
+        )
+      with open(os.path.join(tempdir, 'hoplite_annotations.csv'), 'w') as f:
+        f.write(
+            'recording,label,start_offset_s,end_offset_s,label_type\n'
+            'audio/rec1_audio.wav,sp1,0.0,1.0,POSITIVE\n'
+        )
+
+      audio_sources = source_info.AudioSources(
+          audio_globs=(
+              source_info.AudioSourceConfig(
+                  dataset_name='test',
+                  base_path=tempdir,
+                  file_glob='audio/*.wav',
+                  min_audio_len_s=0.0,
+                  target_sample_rate_hz=16000,
+              ),
+          )
+      )
+      worker = embed.EmbedWorker(audio_sources, self.model_config, db)
+      worker.process_all()
+
+      deployments = {d.name: d for d in db.get_all_deployments()}
+      self.assertSameElements(deployments.keys(), ['site_a', 'site_b'])
+      self.assertEqual(deployments['site_a'].habitat, 'forest')
+      self.assertEqual(deployments['site_b'].habitat, 'wetland')
+      recordings = {r.filename: r for r in db.get_all_recordings()}
+      self.assertEqual(
+          recordings['audio/rec1_audio.wav'].deployment_id,
+          deployments['site_a'].id,
+      )
+      self.assertEqual(
+          recordings['audio/rec2_audio.wav'].deployment_id,
+          deployments['site_b'].id,
+      )
+      self.assertLen(db.get_all_annotations(), 1)
+    finally:
+      shutil.rmtree(tempdir)
+
 
 if __name__ == '__main__':
   absltest.main()

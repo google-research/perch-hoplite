@@ -57,6 +57,8 @@ directory:
     `deployment/recording.wav`),
     and subsequent columns should match `field_name`s from
     `hoplite_metadata_description.csv` where `metadata_level` is `recording`.
+    Note that a `deployment_name` column can be used to explicitly specify the
+    deployment associated with a recording, if needed.
 
 ### Example
 

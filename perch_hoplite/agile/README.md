@@ -119,6 +119,29 @@ DEP01/rec001.wav,20.0,25.0,OtherBird,negative
 DEP02/rec001.wav,5.0,10.0,MyBird,positive
 ```
 
+## Recording Model Detections and Optional Embeddings
+
+`EmbedWorker` also supports recording model detections directly into the
+`annotations` table during the embedding pass, as well as running in a
+detection-only mode without saving embeddings:
+
+*   **Model Detections (`min_detection_score` and `class_list`)**: When
+    `min_detection_score` is specified on `EmbedWorker`, any audio window whose
+    model logit exceeds `min_detection_score` for a target class is recorded as
+    a `POSITIVE` annotation with `provenance` set to `model_config.model_key`
+    and an extra `model_score` float column on the `annotations` table.
+    *   `class_list` can be provided as a sequence of class names (e.g., a
+        local species subset), a `namespace.ClassList`, or a class list name
+        registered in `namespace_db`. If `class_list` is `None`, all classes in
+        the model's default class list are used.
+    *   Adjacent or overlapping detection windows for the same class within a
+        shard are automatically merged into a single annotation spanning the
+        combined time range, carrying the highest observed `model_score`.
+*   **Optional Embeddings (`write_embeddings=False`)**: Setting
+    `write_embeddings=False` on `EmbedWorker` skips storing vectors in the
+    USearch index and skips inserting rows into the `windows` table. This is
+    useful when running a model purely to collect detections and metadata.
+
 ## Colab Notebooks
 
 This directory includes Colab notebooks to guide users through embedding audio,

@@ -15,6 +15,7 @@
 
 """Functionality for embedding audio examples."""
 
+from collections.abc import Sequence
 from concurrent import futures
 import dataclasses
 import datetime
@@ -33,6 +34,8 @@ from perch_hoplite.agile import source_info
 from perch_hoplite.agile import timestamp_resolver as ts_resolver
 from perch_hoplite.db import datatypes
 from perch_hoplite.db import interface as hoplite_interface
+from perch_hoplite.taxonomy import namespace
+from perch_hoplite.taxonomy import namespace_db
 from perch_hoplite.zoo import model_configs
 from perch_hoplite.zoo import zoo_interface
 import soundfile
@@ -58,6 +61,84 @@ class ModelConfig(datatypes.HopliteConfig):
   model_config: config_dict.ConfigDict
   logits_key: str | None = None
   logits_idxes: tuple[int, ...] | None = None
+
+
+def _get_model_class_list(
+    embedding_model: zoo_interface.EmbeddingModel,
+    logits_key: str | None = None,
+) -> tuple[str | None, namespace.ClassList]:
+  """Retrieve (logits_key, ClassList) from an embedding model."""
+  model_cl = getattr(embedding_model, 'class_list', None)
+  if model_cl is None and hasattr(embedding_model, 'embedding_model'):
+    model_cl = getattr(embedding_model.embedding_model, 'class_list', None)
+  if isinstance(model_cl, namespace.ClassList):
+    return logits_key, model_cl
+  if isinstance(model_cl, dict) and model_cl:
+    if logits_key in model_cl:
+      return logits_key, model_cl[logits_key]
+    if 'label' in model_cl:
+      return 'label', model_cl['label']
+    first_key = next(iter(model_cl))
+    return first_key, model_cl[first_key]
+  raise ValueError('Embedding model does not provide a class_list.')
+
+
+def _resolve_detection_classes(
+    embedding_model: zoo_interface.EmbeddingModel,
+    class_list: namespace_db.ClassListType | Sequence[str] | None,
+    logits_key: str | None = None,
+) -> tuple[str | None, tuple[int, ...], tuple[str, ...]]:
+  """Resolve target detection classes and their indices in the model logits."""
+  resolved_key, model_cl = _get_model_class_list(embedding_model, logits_key)
+  if class_list is None:
+    target_classes = model_cl.classes
+  elif isinstance(class_list, (str, namespace.ClassList)):
+    target_classes = namespace_db.get_classes(class_list)
+  else:
+    target_classes = tuple(class_list)
+
+  class_to_idx = {c: i for i, c in enumerate(model_cl.classes)}
+  missing = [c for c in target_classes if c not in class_to_idx]
+  if missing:
+    raise ValueError(f'Classes not found in model class_list: {missing}')
+  target_idxes = tuple(class_to_idx[c] for c in target_classes)
+  return resolved_key, target_idxes, target_classes
+
+
+def extract_detections(
+    logits: np.ndarray,
+    target_idxes: tuple[int, ...],
+    target_classes: tuple[str, ...],
+    min_score: float,
+    base_offset_s: float,
+    hop_size_s: float,
+    window_size_s: float,
+) -> list[tuple[list[float], str, float]]:
+  """Extract and merge adjacent detections above min_score."""
+  scores = logits[..., target_idxes]
+  if scores.ndim == 3:
+    scores = np.max(scores, axis=1)
+
+  detected_classes = np.where(np.any(scores > min_score, axis=0))[0]
+  detections = []
+  for cls_idx in detected_classes:
+    label = target_classes[cls_idx]
+    frame_idxes = np.where(scores[:, cls_idx] > min_score)[0]
+    curr_start = base_offset_s + float(frame_idxes[0]) * hop_size_s
+    curr_end = curr_start + window_size_s
+    curr_score = float(scores[frame_idxes[0], cls_idx])
+    for t in frame_idxes[1:]:
+      start_s = base_offset_s + float(t) * hop_size_s
+      end_s = start_s + window_size_s
+      score = float(scores[t, cls_idx])
+      if start_s <= curr_end + 1e-5:
+        curr_end = max(curr_end, end_s)
+        curr_score = max(curr_score, score)
+      else:
+        detections.append(([curr_start, curr_end], label, curr_score))
+        curr_start, curr_end, curr_score = start_s, end_s, score
+    detections.append(([curr_start, curr_end], label, curr_score))
+  return detections
 
 
 def worker_initializer(state):
@@ -89,12 +170,17 @@ def process_source_id(
     return
 
   outputs = worker.embedding_model.embed(audio_array)
-  logits_key = state['worker'].model_config.logits_key
+  hop_size_s = worker.compute_hop_size_s(source_id, target_sample_rate)
+  detections = worker.get_detections(outputs, source_id.offset_s, hop_size_s)
+  if not worker.write_embeddings:
+    return source_id, [], [], [], detections
+
+  logits_key = worker.model_config.logits_key
   if logits_key is None:
     embeddings = outputs.embeddings
   else:
     embeddings = outputs.logits[logits_key]
-    logits_idxes = state['worker'].model_config.logits_idxes
+    logits_idxes = worker.model_config.logits_idxes
     if logits_idxes is not None:
       embeddings = embeddings[..., logits_idxes]
     # Add channel axis to match the expected shape of the embeddings.
@@ -103,12 +189,10 @@ def process_source_id(
   if embeddings is None:
     return
 
-  sources = []
   offsets = []
   embs = []
   timestamps = []
 
-  hop_size_s = worker.compute_hop_size_s(source_id, target_sample_rate)
   for t, embedding in enumerate(embeddings):
     offset_s = source_id.offset_s + t * hop_size_s
     offsets_list = [offset_s, offset_s + window_size_s]
@@ -116,12 +200,11 @@ def process_source_id(
         source_id.filepath, offset_s, base_timestamp=recording_timestamp
     )
     for channel_embedding in embedding:
-      sources.append(source_id)
       offsets.append(offsets_list)
       embs.append(channel_embedding)
       timestamps.append(ts)
 
-  return sources, offsets, embs, timestamps
+  return source_id, offsets, embs, timestamps, detections
 
 
 # TODO(tomdenton): Use itertools.batched in Python 3.12+
@@ -143,12 +226,17 @@ class EmbedWorker:
       audio_worker_threads: int = 8,
       timestamp_resolver: ts_resolver.TimestampResolver | None = None,
       timestamp_file_pattern: str | None = None,
+      write_embeddings: bool = True,
+      class_list: namespace_db.ClassListType | Sequence[str] | None = None,
+      min_detection_score: float | None = None,
   ):
     self.db = db
     self.model_config = model_config
     self.audio_sources = audio_sources
     self.audio_worker_threads = audio_worker_threads
     self.timestamp_file_pattern = timestamp_file_pattern
+    self.write_embeddings = write_embeddings
+    self.min_detection_score = min_detection_score
     if timestamp_resolver is None:
       if self.timestamp_file_pattern is not None:
         self.timestamp_resolver = ts_resolver.TimestampFromFilename(
@@ -164,6 +252,14 @@ class EmbedWorker:
       self.embedding_model = model_class.from_config(model_config.model_config)
     else:
       self.embedding_model = embedding_model
+    if self.min_detection_score is not None:
+      (
+          self._det_logits_key,
+          self._det_target_idxes,
+          self._det_target_classes,
+      ) = _resolve_detection_classes(
+          self.embedding_model, class_list, self.model_config.logits_key
+      )
     self.window_size_s = getattr(self.embedding_model, 'window_size_s')
     self.audio_globs = {
         g.dataset_name: g for g in self.audio_sources.audio_globs
@@ -174,6 +270,31 @@ class EmbedWorker:
     }
     self._deployment_map = {}
     self._recording_map = {}
+
+  def get_detections(
+      self,
+      outputs: zoo_interface.InferenceOutputs,
+      base_offset_s: float,
+      hop_size_s: float,
+  ) -> list[tuple[list[float], str, float]]:
+    """Extract merged detections from model outputs."""
+    if self.min_detection_score is None or not outputs.logits:
+      return []
+    if self._det_logits_key in outputs.logits:
+      logits = outputs.logits[self._det_logits_key]
+    elif 'label' in outputs.logits:
+      logits = outputs.logits['label']
+    else:
+      logits = next(iter(outputs.logits.values()))
+    return extract_detections(
+        logits=logits,
+        target_idxes=self._det_target_idxes,
+        target_classes=self._det_target_classes,
+        min_score=self.min_detection_score,
+        base_offset_s=base_offset_s,
+        hop_size_s=hop_size_s,
+        window_size_s=self.window_size_s,
+    )
 
   def _log_error(self, source_id, exception, counter_name):
     logging.warning(
@@ -495,11 +616,16 @@ class EmbedWorker:
       commit_every_n_batches: int | None = 100,
   ):
     """Embed audio examples from the given dataset."""
-    if self.timestamp_resolver is not None:
+    if self.write_embeddings and self.timestamp_resolver is not None:
       if 'timestamp' not in self.db.get_extra_table_columns().get(
           'windows', {}
       ):
         self.db.add_extra_table_column('windows', 'timestamp', str)
+    if self.min_detection_score is not None:
+      if 'model_score' not in self.db.get_extra_table_columns().get(
+          'annotations', {}
+      ):
+        self.db.add_extra_table_column('annotations', 'model_score', float)
     # Process all sources.
     state = {}
     state['db'] = self.db
@@ -531,40 +657,46 @@ class EmbedWorker:
         for result in got:
           if result is None:
             continue
-          recording_ids = []
-          for s in result[0]:
-            depl_name = self._get_deployment_name(s.file_id, s.dataset_name)
-            deployment_id = self._get_or_insert_deployment_id(
-                depl_name, s.dataset_name
-            )
-            recording_id, _ = self._get_or_insert_recording_id(
-                s.file_id, deployment_id, s.dataset_name
-            )
-            recording_ids.append(recording_id)
-          if all(r in new_recordings for r in recording_ids):  # pyrefly: ignore[not-iterable]
+          source_id, offsets_list, embs_list, timestamps_list, detections = (
+              result
+          )
+          depl_name = self._get_deployment_name(
+              source_id.file_id, source_id.dataset_name
+          )
+          deployment_id = self._get_or_insert_deployment_id(
+              depl_name, source_id.dataset_name
+          )
+          recording_id, _ = self._get_or_insert_recording_id(
+              source_id.file_id, deployment_id, source_id.dataset_name
+          )
+          if new_recordings is not None and recording_id in new_recordings:
             dupe_strategy = 'allow'
           else:
             dupe_strategy = handle_duplicates
-          _, offsets_list, embs_list, timestamps_list = result
 
-          windows_batch = []
-          for _, (rec_id, o, ts) in enumerate(
-              zip(recording_ids, offsets_list, timestamps_list)
-          ):
-            win_dict = {
-                'recording_id': rec_id,
-                'offsets': o,
-            }
-            if ts is not None:
-              win_dict['timestamp'] = ts
-            windows_batch.append(win_dict)
+          if self.write_embeddings and offsets_list:
+            windows_batch = []
+            for o, ts in zip(offsets_list, timestamps_list):
+              win_dict = {'recording_id': recording_id, 'offsets': o}
+              if ts is not None:
+                win_dict['timestamp'] = ts
+              windows_batch.append(win_dict)
+            self.db.insert_windows_batch(
+                windows_batch,
+                np.array(embs_list),
+                handle_duplicates=dupe_strategy,
+            )
 
-          embeddings_batch = np.array(embs_list)
-          self.db.insert_windows_batch(
-              windows_batch,
-              embeddings_batch,
-              handle_duplicates=dupe_strategy,
-          )
+          for det_offsets, det_label, det_score in detections:
+            self.db.insert_annotation(
+                recording_id=recording_id,
+                offsets=det_offsets,
+                label=det_label,
+                label_type=datatypes.LabelType.POSITIVE,
+                provenance=self.model_config.model_key,
+                handle_duplicates=dupe_strategy,
+                model_score=det_score,
+            )
         if commit_every_n_batches and i % commit_every_n_batches == 0:
           self.db.commit()
     self.db.commit()
@@ -648,7 +780,11 @@ class EmbedWorker:
 
     # Update model config and audio sources in the database.
     self.update_configs()
-    if self.db.count_embeddings() == 0:
+    if (
+        self.db.count_embeddings() == 0
+        and not self.db.get_all_deployments()
+        and not self.db.get_all_recordings()
+    ):
       # No chance of duplicates, so we can use "allow" mode.
       handle_duplicates = 'allow'
 

@@ -51,15 +51,30 @@ VGGISH_SLUG = 'google/vggish'
 
 
 def normalize_slug(model_slug: str, model_version: int | None = None) -> str:
-  """Convert the old full URLs used by TensorflowHub to KaggleHub slugs."""
+  """Normalize model URLs, preserving explicit or embedded version pins.
+
+  A separate model_version must agree with a version already in the handle.
+  """
+  # Normalize URLs before validating or appending an explicit version.
   if model_slug == PERCH_TF_HUB_URL:
-    return PERCH_V1_SLUG
+    model_slug = PERCH_V1_SLUG
   elif model_slug == PERCH_V2_TF_HUB_URL:
-    return PERCH_V2_SLUG
+    model_slug = PERCH_V2_SLUG
   elif model_slug == SURFPERCH_TF_HUB_URL:
-    return SURFPERCH_SLUG
+    model_slug = SURFPERCH_SLUG
   elif model_slug.startswith(BASE_KAGGLE_URL):
-    return model_slug[len(BASE_KAGGLE_URL) :]
+    model_slug = model_slug[len(BASE_KAGGLE_URL) :]
+
+  parts = model_slug.split('/')
+  if model_version is not None and len(parts) == 5 and parts[-1].isdecimal():
+    # The fifth component is a version; SurfPerch's numeric fourth component
+    # is its variation name and must remain part of the unversioned handle.
+    if int(parts[-1]) != model_version:
+      raise ValueError(
+          f'Model version {model_version} conflicts with URL/slug version'
+          f' {parts[-1]}.'
+      )
+    model_slug = '/'.join(parts[:-1])
 
   if model_slug == PERCH_V1_SLUG and model_version in (5, 6, 7):
     # Due to SNAFUs uploading the new model version to KaggleModels,

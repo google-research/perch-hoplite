@@ -69,6 +69,38 @@ Namespaces support algebraic set operations:
     This is helpful for defining mappings that are mostly trivial, like
     year-on-year updates of large taxonomies.
 
+## Convert species labels of unknown provenance
+
+Use `class_utils.convert_species_to_namespace` to find source namespaces
+that contain a species label and map it into a canonical target taxonomy.
+The default target is `inat2024`, the iNaturalist/Perch 2.0 taxonomy.
+
+```python
+from perch_hoplite.taxonomy import class_utils
+
+# Search all known source namespaces:
+class_utils.convert_species_to_namespace("AMRO")
+# 'Turdus migratorius'
+
+# Batch conversion preserves order and duplicates. Unknown labels stay
+# visible as None when errors="warn" or errors="ignore":
+class_utils.convert_species_to_namespace(["AMRO", "unknown_label"], errors="warn")
+# ['Turdus migratorius', None]
+
+# If the source is known, disambiguate using it:
+class_utils.convert_species_to_namespace(
+    "AMRO", source_namespace="aou_bird_codes"
+)
+```
+
+The resolver uses **exact label matches** and stored namespace mappings, not
+fuzzy matching. If different possible source taxonomies yield conflicting
+species, it raises `ValueError` by default rather than silently guessing.
+Specify `source_namespace` if known, or choose `errors="warn"` (log and
+return `None`) or `errors="ignore"` (return `None` silently) for ambiguous
+or unmatched labels. The `taxonomy_database` argument accepts a custom
+`TaxonomyDatabase` for projects maintaining additional mappings.
+
 ## Data consistency
 
 When a taxonomy database is loaded, it is automatically tested for consistency.

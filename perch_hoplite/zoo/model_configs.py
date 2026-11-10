@@ -46,6 +46,7 @@ class ModelConfigName(enum.Enum):
   BIRDAVES = 'birdaves'
   PLACEHOLDER = 'placeholder'
   PERCH_V2_ONNX = 'perch_v2_onnx'
+  BIRDCODE = 'birdcode'
   CLAP = 'clap'
   CLIP = 'clip'
 
@@ -131,6 +132,9 @@ def get_model_class(model_key: str) -> type[zoo_interface.EmbeddingModel]:
   elif model_key == 'perch_v2_onnx':
     module = importlib.import_module('perch_hoplite.zoo.models_onnx')
     return _get_obj(module, 'PerchV2OnnxModel')
+  elif model_key == 'birdcode':
+    module = importlib.import_module('perch_hoplite.zoo.birdcode')
+    return _get_obj(module, 'BirdCODEModel')
   elif model_key == 'clap':
     module = importlib.import_module('perch_hoplite.zoo.hf_models')
     return _get_obj(module, 'CLAPModel')
@@ -332,6 +336,14 @@ def get_preset_model_config(preset_name: str | ModelConfigName) -> PresetInfo:
     model_class = _get_obj(module, 'HandcraftedFeaturesModel')
     model_config = model_class.beans_baseline_config()
     embedding_dim = 80
+  elif preset_name == ModelConfigName.BIRDCODE:
+    model_key = 'birdcode'
+    embedding_dim = 1024
+    model_config.sample_rate = 32000
+    model_config.window_size_s = 5.0
+    model_config.hop_size_s = 5.0
+    model_config.device = 'gpu'
+    model_config.model_path = 'EarthSpeciesProject/sed-birdcode'
   elif preset_name == ModelConfigName.CLAP:
     model_key = 'clap'
     embedding_dim = 512

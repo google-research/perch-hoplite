@@ -15,11 +15,14 @@
 
 """Tests for mass-embedding functionality."""
 
+import importlib
 import importlib.util
+import json
 from unittest import mock
 
 from ml_collections import config_dict
 import numpy as np
+from perch_hoplite.zoo import hf_hub
 from perch_hoplite.zoo import model_configs
 from perch_hoplite.zoo import zoo_interface
 
@@ -203,6 +206,129 @@ class ZooTest(parameterized.TestCase):
     self.assertEqual(outputs.embeddings.shape[1], 1)
     self.assertEqual(outputs.embeddings.shape[2], 1)
     self.assertEqual(outputs.embeddings.shape[3], 512)
+
+  @mock.patch('huggingface_hub.hf_hub_download')
+  def test_hf_hub_resolve_and_stage(self, mock_download):
+    temp_dir = self.create_tempdir()
+    local_cfg = temp_dir.create_file('config.json', content='{}').full_path
+
+    self.assertEqual(
+        hf_hub.stage_local_dir(temp_dir.full_path), temp_dir.full_path
+    )
+    self.assertEqual(hf_hub.stage_local_dir('org/repo'), 'org/repo')
+    self.assertEqual(
+        hf_hub.resolve_file(temp_dir.full_path, 'config.json'), local_cfg
+    )
+    mock_download.assert_not_called()
+
+    with self.assertRaises(FileNotFoundError):
+      hf_hub.stage_local_dir(temp_dir.full_path + '_missing')
+    with self.assertRaises(FileNotFoundError):
+      hf_hub.resolve_file(temp_dir.full_path, 'missing.json')
+
+    mock_download.return_value = '/cached/config.json'
+    self.assertEqual(
+        hf_hub.resolve_file('org/repo', 'config.json'), '/cached/config.json'
+    )
+    mock_download.assert_called_once_with(
+        repo_id='org/repo', filename='config.json'
+    )
+
+  def test_birdcode_preset_config(self):
+    preset_info = model_configs.get_preset_model_config(
+        model_configs.ModelConfigName.BIRDCODE
+    )
+    self.assertEqual(preset_info.preset_name, 'birdcode')
+    self.assertEqual(preset_info.model_key, 'birdcode')
+    self.assertEqual(preset_info.embedding_dim, 1024)
+    self.assertEqual(preset_info.model_config.sample_rate, 32000)
+    self.assertEqual(preset_info.model_config.window_size_s, 5.0)
+    self.assertEqual(preset_info.model_config.hop_size_s, 5.0)
+
+  @absltest.skipIf(not _HAS_TORCH, 'torch and transformers not installed')
+  def test_birdcode_model(self):
+    torch = importlib.import_module('torch')
+    transformers = importlib.import_module('transformers')
+
+    temp_dir = self.create_tempdir()
+    ckpt_dir = temp_dir.mkdir('checkpoint')
+
+    labels = [
+        'Apteryx owenii',
+        'Nestor notabilis',
+        'Prosthemadera novaeseelandiae',
+    ]
+    depths = [1, 1, 1, 1]
+    hidden_sizes = [8, 16, 32, 64]
+    embed_dim = hidden_sizes[-1]
+    num_prototypes = 6
+    temp_dir.create_file(
+        'config.json',
+        content=json.dumps({
+            'labels': labels,
+            'sample_rate': 32000,
+            'target_duration': 5.0,
+            'encoder': {
+                'type': 'audioprotopnet_frame',
+                'num_prototypes': num_prototypes,
+                'depths': depths,
+                'hidden_sizes': hidden_sizes,
+            },
+        }),
+    )
+
+    backbone_cfg = transformers.ConvNextConfig(
+        num_channels=1, depths=depths, hidden_sizes=hidden_sizes
+    )
+    backbone = transformers.ConvNextModel(backbone_cfg)
+    state_dict = {
+        f'encoder.backbone.{k}': v for k, v in backbone.state_dict().items()
+    }
+    state_dict['encoder.prototype_vectors'] = torch.zeros(
+        num_prototypes, embed_dim, 1, 1
+    )
+    state_dict['classifier.weight'] = torch.ones(
+        len(labels), num_prototypes // len(labels)
+    )
+    state_dict['classifier.bias'] = torch.zeros(len(labels))
+    torch.save(state_dict, ckpt_dir.create_file('best_model.pt').full_path)
+
+    config = config_dict.ConfigDict({
+        'sample_rate': 32000,
+        'model_path': temp_dir.full_path,
+        'window_size_s': 5.0,
+        'hop_size_s': 5.0,
+    })
+    model = model_configs.get_model_class('birdcode').from_config(config)
+    self.assertEqual(model.class_list, {})
+    fake_batch = np.zeros([2, 32000 * 5], dtype=np.float32)
+    outputs = model.batch_embed(fake_batch)
+    self.assertSequenceEqual(outputs.embeddings.shape, [2, 1, 1, embed_dim])
+    self.assertIsNone(outputs.logits)
+
+    single_outputs = model.embed(np.zeros([32000 * 10], dtype=np.float32))
+    self.assertSequenceEqual(single_outputs.embeddings.shape, [2, 1, embed_dim])
+
+    config_with_logits = config_dict.ConfigDict({
+        'sample_rate': 32000,
+        'model_path': temp_dir.full_path,
+        'window_size_s': 5.0,
+        'hop_size_s': 5.0,
+        'compute_logits': True,
+    })
+    logits_model = model_configs.get_model_class('birdcode').from_config(
+        config_with_logits
+    )
+    logits_outputs = logits_model.batch_embed(fake_batch)
+    self.assertSequenceEqual(
+        logits_outputs.embeddings.shape, [2, 1, 1, embed_dim]
+    )
+    self.assertIn('birdcode', logits_outputs.logits)
+    self.assertSequenceEqual(logits_outputs.logits['birdcode'].shape, [2, 1, 3])
+    self.assertEqual(
+        logits_model.class_list['birdcode'].namespace, 'gbif_backbone'
+    )
+    self.assertEqual(logits_model.class_list['birdcode'].classes, tuple(labels))
 
 
 if __name__ == '__main__':

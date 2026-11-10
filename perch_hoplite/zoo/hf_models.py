@@ -16,30 +16,40 @@
 """Hugging Face model wrappers for Perch Hoplite."""
 
 import dataclasses
-import os
-import tempfile
 import threading
 from typing import Any
 
-from etils import epath
 import librosa
 from ml_collections import config_dict
 import numpy as np
+from perch_hoplite.zoo import hf_hub
 from perch_hoplite.zoo import zoo_interface
 from PIL import Image
 import torch
 import transformers
 
-_LOAD_LOCK = threading.Lock()
+TORCH_LOAD_LOCK = threading.Lock()
+
+
+def resolve_torch_device(device: str) -> str:
+  """Resolves `'cpu'`, `'gpu'`, `'cuda'`, or `'cuda:<idx>'` to a torch device."""
+  if device == "cpu":
+    return "cpu"
+  if device in ("gpu", "cuda") or device.startswith("cuda:"):
+    if not torch.cuda.is_available():
+      return "cpu"
+    return "cuda" if device == "gpu" else device
+  raise ValueError(f"Unsupported PyTorch device: {device!r}")
 
 
 def _load_pretrained(
     model_path: str, model_cls: Any, processor_cls: Any
 ) -> tuple[Any, Any]:
   """Loads a Hugging Face model and processor thread-safely."""
-  with _LOAD_LOCK:
-    processor = processor_cls.from_pretrained(model_path)
-    model = model_cls.from_pretrained(model_path)
+  resolved_path = hf_hub.stage_local_dir(model_path)
+  with TORCH_LOAD_LOCK:
+    processor = processor_cls.from_pretrained(resolved_path)
+    model = model_cls.from_pretrained(resolved_path)
   return model, processor
 
 
@@ -51,7 +61,7 @@ class CLAPModel(zoo_interface.EmbeddingModel):
 
   Attributes:
     model_path: Path or Hugging Face repo ID for model files.
-    device: Device to run inference on ("cpu" or "gpu").
+    device: Device to run inference on ("cpu", "gpu", or "cuda").
     model: Loaded CLAP model.
     processor: Loaded CLAP processor.
   """
@@ -70,9 +80,7 @@ class CLAPModel(zoo_interface.EmbeddingModel):
     )
 
   def __post_init__(self) -> None:
-    self.device = (
-        "cuda" if torch.cuda.is_available() and self.device == "gpu" else "cpu"
-    )
+    self.device = resolve_torch_device(self.device)
     self.model, self.processor = _load_pretrained(
         self.model_path, transformers.ClapModel, transformers.ClapProcessor
     )
@@ -114,7 +122,7 @@ class CLIPModel(zoo_interface.EmbeddingModel):
 
   Attributes:
     model_path: Path or Hugging Face repo ID for model files.
-    device: Device to run inference on ("cpu" or "gpu").
+    device: Device to run inference on ("cpu", "gpu", or "cuda").
     model: Loaded CLIP model.
     processor: Loaded CLIP processor.
     n_mels: Number of Mel bins for spectrogram.
@@ -149,9 +157,7 @@ class CLIPModel(zoo_interface.EmbeddingModel):
     )
 
   def __post_init__(self) -> None:
-    self.device = (
-        "cuda" if torch.cuda.is_available() and self.device == "gpu" else "cpu"
-    )
+    self.device = resolve_torch_device(self.device)
     self.model, self.processor = _load_pretrained(
         self.model_path, transformers.CLIPModel, transformers.CLIPProcessor
     )

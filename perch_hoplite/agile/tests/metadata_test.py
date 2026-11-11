@@ -16,8 +16,6 @@
 """Tests for metadata handling."""
 
 import os
-import shutil
-import tempfile
 
 from perch_hoplite.agile import metadata
 from perch_hoplite.db import datatypes
@@ -29,9 +27,7 @@ class MetadataTest(absltest.TestCase):
 
   def setUp(self):
     super().setUp()
-    # `self.create_tempdir()` raises an UnparsedFlagAccessError, which is why
-    # we use `tempdir` directly.
-    self.tempdir = tempfile.mkdtemp()
+    self.tempdir = self.create_tempdir().full_path
     self.desc_path = os.path.join(
         self.tempdir, 'hoplite_metadata_description.csv'
     )
@@ -62,10 +58,6 @@ class MetadataTest(absltest.TestCase):
       )
     with open(self.rec_path, 'w') as f:
       f.write('recording,observer,temp_c\nrec_a,Buffy,\nrec_b,Willow,22.2\n')
-
-  def tearDown(self):
-    super().tearDown()
-    shutil.rmtree(self.tempdir)
 
   def test_metadata_loading(self):
     md = metadata.AgileMetadata.from_directory(self.tempdir)

@@ -16,8 +16,6 @@
 """Tests for colab display elements."""
 
 import os
-import shutil
-import tempfile
 from unittest import mock
 
 import IPython
@@ -46,13 +44,7 @@ class EmbeddingDisplayTest(absltest.TestCase):
     )
 
     super().setUp()
-    # `self.create_tempdir()` raises an UnparsedFlagAccessError, which is why
-    # we use `tempdir` directly.
-    self.tempdir = tempfile.mkdtemp()
-
-  def tearDown(self):
-    super().tearDown()
-    shutil.rmtree(self.tempdir)
+    self.tempdir = self.create_tempdir().full_path
 
   def test_query_display(self):
     classes = ['pos', 'neg']

@@ -35,13 +35,13 @@ jobs:
           sudo apt-get install libsndfile1 ffmpeg
           uv pip sync --system requirements.txt
           uv pip install --system -e . --no-deps
-      - name: Test taxonomy with unittest
-        run: python -m unittest discover -s perch_hoplite/taxonomy -p "*test.py"
-      - name: Test zoo with unittest
-        run: python -m unittest discover -s perch_hoplite/zoo -p "*test.py"
-      - name: Test zoo tensorflow models with unittest
-        run: python -m unittest discover -s perch_hoplite/zoo/tests_tf -p "*test.py"
-      - name: Test agile with unittest
-        run: python -m unittest discover -s perch_hoplite/agile/tests -p "*test.py"
-      - name: Test geofence with unittest
-        run: python -m unittest discover -s perch_hoplite/geofence -p "*test.py"
+      - name: Test taxonomy with absltest
+        run: python -c "from absl.testing import absltest; absltest.main(module=None)" -- discover -s perch_hoplite/taxonomy -p "*test.py"
+      - name: Test zoo with absltest
+        run: python -c "from absl.testing import absltest; absltest.main(module=None)" -- discover -s perch_hoplite/zoo -p "*test.py"
+      - name: Test zoo tensorflow models with absltest
+        run: python -c "from absl.testing import absltest; absltest.main(module=None)" -- discover -s perch_hoplite/zoo/tests_tf -p "*test.py"
+      - name: Test agile with absltest
+        run: python -c "from absl.testing import absltest; absltest.main(module=None)" -- discover -s perch_hoplite/agile/tests -p "*test.py"
+      - name: Test geofence with absltest
+        run: python -c "from absl.testing import absltest; absltest.main(module=None)" -- discover -s perch_hoplite/geofence -p "*test.py"

@@ -17,8 +17,6 @@
 
 import datetime
 import os
-import shutil
-import tempfile
 
 from absl.testing import absltest
 from etils import epath
@@ -52,11 +50,7 @@ class TimestampResolverTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
-    self.tempdir = tempfile.mkdtemp()
-
-  def tearDown(self):
-    super().tearDown()
-    shutil.rmtree(self.tempdir)
+    self.tempdir = self.create_tempdir().full_path
 
   def get_db(self, db_type: str):
     if db_type == 'in_mem':

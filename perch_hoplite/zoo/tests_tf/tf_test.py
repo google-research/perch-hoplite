@@ -16,7 +16,6 @@
 """Tests for mass-embedding functionality."""
 
 import os
-import tempfile
 
 from ml_collections import config_dict
 import numpy as np

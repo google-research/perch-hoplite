@@ -16,7 +16,6 @@
 """Utilities for testing agile modeling functionality."""
 
 import os
-import shutil
 
 import numpy as np
 from perch_hoplite.agile import classifier
@@ -101,8 +100,6 @@ def call_density_simulation(
     pos_pi: float = 0.07,
 ):
   """Creates a test database for call density estimation."""
-  if os.path.exists('/tmp/test_db'):
-    shutil.rmtree('/tmp/test_db')
   rng = np.random.default_rng(rng_seed)
   db = in_mem_impl.InMemoryGraphSearchDB.create(embedding_dim=embedding_dim)
   data, labels, ideal_classifier = make_mix_embeddings(

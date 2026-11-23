@@ -15,9 +15,6 @@
 
 """Tests for source_info."""
 
-import shutil
-import tempfile
-
 from perch_hoplite.agile import source_info
 from perch_hoplite.agile.tests import test_utils
 
@@ -28,13 +25,7 @@ class SourceInfoTest(absltest.TestCase):
 
   def setUp(self):
     super().setUp()
-    # `self.create_tempdir()` raises an UnparsedFlagAccessError, which is why
-    # we use `tempdir` directly.
-    self.tempdir = tempfile.mkdtemp()
-
-  def tearDown(self):
-    super().tearDown()
-    shutil.rmtree(self.tempdir)
+    self.tempdir = self.create_tempdir().full_path
 
   def test_audio_sources_iteration(self):
     classes = ['pos', 'neg']

@@ -15,9 +15,6 @@
 
 """Tests for brute search functionality."""
 
-import shutil
-import tempfile
-
 import numpy as np
 from perch_hoplite.db import brutalism
 from perch_hoplite.db import score_functions
@@ -33,11 +30,7 @@ class BrutalismTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
-    self.tempdir = tempfile.mkdtemp()
-
-  def tearDown(self):
-    super().tearDown()
-    shutil.rmtree(self.tempdir)
+    self.tempdir = self.create_tempdir().full_path
 
   @parameterized.product(
       db_type=(

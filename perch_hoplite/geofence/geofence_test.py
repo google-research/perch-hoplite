@@ -14,7 +14,6 @@
 # limitations under the License.
 
 import os
-import tempfile
 
 import geopandas as gpd
 from geopandas import datasets as gpd_datasets
@@ -216,9 +215,8 @@ class GeofenceTest(parameterized.TestCase):
         "species_id": [species_name],
         "cell_union": pa.array([encoder.buffer()], type=pa.binary()),
     })
-    temp_dir = tempfile.TemporaryDirectory()
-    self.addCleanup(temp_dir.cleanup)
-    temp_file_path = os.path.join(temp_dir.name, "test_index.parquet")
+    temp_dir = self.create_tempdir().full_path
+    temp_file_path = os.path.join(temp_dir, "test_index.parquet")
     pq.write_table(table, temp_file_path)
 
     infer = inference.GeofenceInference(temp_file_path)
@@ -243,9 +241,8 @@ class GeofenceTest(parameterized.TestCase):
         "species_id": [species_name],
         "cell_union": pa.array([encoder.buffer()], type=pa.binary()),
     })
-    temp_dir = tempfile.TemporaryDirectory()
-    self.addCleanup(temp_dir.cleanup)
-    temp_file_path = os.path.join(temp_dir.name, "test_index_multi.parquet")
+    temp_dir = self.create_tempdir().full_path
+    temp_file_path = os.path.join(temp_dir, "test_index_multi.parquet")
     pq.write_table(table, temp_file_path)
 
     infer = inference.GeofenceInference(temp_file_path)
@@ -263,9 +260,8 @@ class GeofenceTest(parameterized.TestCase):
     species1 = "Gallirallus sylvestris"
     species2 = "Drepanis coccinea"
     species3 = "Hemignathus wilsoni"
-    temp_dir = tempfile.TemporaryDirectory()
-    self.addCleanup(temp_dir.cleanup)
-    temp_file_path = os.path.join(temp_dir.name, "test_build_index.parquet")
+    temp_dir = self.create_tempdir().full_path
+    temp_file_path = os.path.join(temp_dir, "test_build_index.parquet")
     indexing_lib.build_parquet_index(
         gdf,
         output_file=temp_file_path,
@@ -285,9 +281,8 @@ class GeofenceTest(parameterized.TestCase):
 
   def test_build_and_inference_e2e(self):
     gdf = self._get_test_gdf()
-    temp_dir = tempfile.TemporaryDirectory()
-    self.addCleanup(temp_dir.cleanup)
-    temp_file_path = os.path.join(temp_dir.name, "e2e_index.parquet")
+    temp_dir = self.create_tempdir().full_path
+    temp_file_path = os.path.join(temp_dir, "e2e_index.parquet")
     indexing_lib.build_parquet_index(
         gdf,
         output_file=temp_file_path,

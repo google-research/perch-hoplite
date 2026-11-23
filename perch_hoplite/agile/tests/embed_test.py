@@ -17,8 +17,6 @@
 
 import datetime
 import os
-import shutil
-import tempfile
 
 from ml_collections import config_dict
 import numpy as np
@@ -39,14 +37,8 @@ class EmbedTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
-    # `self.create_tempdir()` raises an UnparsedFlagAccessError, which is why
-    # we use `tempdir` directly.
-    self.tempdir = tempfile.mkdtemp()
+    self.tempdir = self.create_tempdir().full_path
     self.db_path = os.path.join(self.tempdir, 'test_db')
-
-  def tearDown(self):
-    super().tearDown()
-    shutil.rmtree(self.tempdir)
 
   @parameterized.named_parameters(
       ('in_mem', 'in_mem'),
@@ -197,7 +189,7 @@ class DuplicateHandlingTest(absltest.TestCase):
 
   def setUp(self):
     super().setUp()
-    self.tempdir = tempfile.mkdtemp()
+    self.tempdir = self.create_tempdir().full_path
     self.db_path = os.path.join(self.tempdir, 'test_db')
 
     classes = ['pos']
@@ -224,10 +216,6 @@ class DuplicateHandlingTest(absltest.TestCase):
         embedding_dim=32,
         model_config=placeholder_model_config,
     )
-
-  def tearDown(self):
-    super().tearDown()
-    shutil.rmtree(self.tempdir)
 
   def test_duplicate_error(self):
     db = db_loader.create_new_usearch_db(db_path=self.db_path, embedding_dim=32)
@@ -309,143 +297,137 @@ class DuplicateHandlingTest(absltest.TestCase):
     )
 
   def test_timestamp_file_pattern(self):
-    tempdir = tempfile.mkdtemp()
-    try:
-      db = db_loader.create_new_usearch_db(
-          db_path=os.path.join(tempdir, 'test_db'), embedding_dim=32
-      )
+    tempdir = self.create_tempdir().full_path
+    db = db_loader.create_new_usearch_db(
+        db_path=os.path.join(tempdir, 'test_db'), embedding_dim=32
+    )
 
-      classes = ['pos']
-      filenames = ['20231024_153000']
-      test_utils.make_wav_files(tempdir, classes, filenames, file_len_s=2.0)
+    classes = ['pos']
+    filenames = ['20231024_153000']
+    test_utils.make_wav_files(tempdir, classes, filenames, file_len_s=2.0)
 
-      audio_sources = source_info.AudioSources(
-          audio_globs=(
-              source_info.AudioSourceConfig(
-                  dataset_name='test',
-                  base_path=tempdir,
-                  file_glob='*/*.wav',
-                  min_audio_len_s=0.0,
-                  target_sample_rate_hz=16000,
-              ),
-          )
-      )
+    audio_sources = source_info.AudioSources(
+        audio_globs=(
+            source_info.AudioSourceConfig(
+                dataset_name='test',
+                base_path=tempdir,
+                file_glob='*/*.wav',
+                min_audio_len_s=0.0,
+                target_sample_rate_hz=16000,
+            ),
+        )
+    )
 
-      worker = embed.EmbedWorker(
-          audio_sources,
-          self.model_config,
-          db,
-          timestamp_file_pattern='%Y%m%d_%H%M%S_pos',
-      )
-      worker.process_all(handle_duplicates='allow')
+    worker = embed.EmbedWorker(
+        audio_sources,
+        self.model_config,
+        db,
+        timestamp_file_pattern='%Y%m%d_%H%M%S_pos',
+    )
+    worker.process_all(handle_duplicates='allow')
 
-      recordings = db.get_all_recordings()
-      self.assertLen(recordings, 1)
-      recording = recordings[0]
-      expected_recording_dt = datetime.datetime(
-          2023, 10, 24, 15, 30, 0, tzinfo=datetime.timezone.utc
-      )
-      self.assertEqual(recording.datetime, expected_recording_dt)
+    recordings = db.get_all_recordings()
+    self.assertLen(recordings, 1)
+    recording = recordings[0]
+    expected_recording_dt = datetime.datetime(
+        2023, 10, 24, 15, 30, 0, tzinfo=datetime.timezone.utc
+    )
+    self.assertEqual(recording.datetime, expected_recording_dt)
 
-      windows = db.get_all_windows()
-      self.assertLen(windows, 2)
+    windows = db.get_all_windows()
+    self.assertLen(windows, 2)
 
-      def get_timestamp(w):
-        ts = getattr(w, 'timestamp', None)
-        if isinstance(ts, str):
-          return datetime.datetime.fromisoformat(ts)
-        return ts
+    def get_timestamp(w):
+      ts = getattr(w, 'timestamp', None)
+      if isinstance(ts, str):
+        return datetime.datetime.fromisoformat(ts)
+      return ts
 
-      self.assertEqual(
-          get_timestamp(windows[0]),
-          datetime.datetime(
-              2023, 10, 24, 15, 30, 0, tzinfo=datetime.timezone.utc
-          ),
-      )
-      self.assertTrue(hasattr(windows[1], 'timestamp'))
-      self.assertEqual(
-          get_timestamp(windows[1]),
-          datetime.datetime(
-              2023, 10, 24, 15, 30, 1, tzinfo=datetime.timezone.utc
-          ),
-      )
-    finally:
-      shutil.rmtree(tempdir)
+    self.assertEqual(
+        get_timestamp(windows[0]),
+        datetime.datetime(
+            2023, 10, 24, 15, 30, 0, tzinfo=datetime.timezone.utc
+        ),
+    )
+    self.assertTrue(hasattr(windows[1], 'timestamp'))
+    self.assertEqual(
+        get_timestamp(windows[1]),
+        datetime.datetime(
+            2023, 10, 24, 15, 30, 1, tzinfo=datetime.timezone.utc
+        ),
+    )
 
   def test_deployment_from_recording_metadata(self):
-    tempdir = tempfile.mkdtemp()
-    try:
-      db = db_loader.create_new_usearch_db(
-          db_path=os.path.join(tempdir, 'test_db'), embedding_dim=32
+    tempdir = self.create_tempdir().full_path
+    db = db_loader.create_new_usearch_db(
+        db_path=os.path.join(tempdir, 'test_db'), embedding_dim=32
+    )
+    test_utils.make_wav_files(
+        tempdir, ['audio'], ['rec1', 'rec2'], file_len_s=2.0
+    )
+    with open(
+        os.path.join(tempdir, 'hoplite_metadata_description.csv'), 'w'
+    ) as f:
+      f.write(
+          'field_name,metadata_level,type,description\n'
+          'deployment,deployment,str,Deployment identifier.\n'
+          'habitat,deployment,str,Habitat type.\n'
+          'recording,recording,str,Recording identifier.\n'
+          'deployment_name,recording,str,Deployment identifier.\n'
       )
-      test_utils.make_wav_files(
-          tempdir, ['audio'], ['rec1', 'rec2'], file_len_s=2.0
+    with open(
+        os.path.join(tempdir, 'hoplite_deployments_metadata.csv'), 'w'
+    ) as f:
+      f.write('deployment,habitat\nsite_a,forest\nsite_b,wetland\n')
+    with open(
+        os.path.join(tempdir, 'hoplite_recordings_metadata.csv'), 'w'
+    ) as f:
+      f.write(
+          'recording,deployment_name\n'
+          'audio/rec1_audio.wav,site_a\n'
+          'audio/rec2_audio.wav,site_b\n'
       )
-      with open(
-          os.path.join(tempdir, 'hoplite_metadata_description.csv'), 'w'
-      ) as f:
-        f.write(
-            'field_name,metadata_level,type,description\n'
-            'deployment,deployment,str,Deployment identifier.\n'
-            'habitat,deployment,str,Habitat type.\n'
-            'recording,recording,str,Recording identifier.\n'
-            'deployment_name,recording,str,Deployment identifier.\n'
-        )
-      with open(
-          os.path.join(tempdir, 'hoplite_deployments_metadata.csv'), 'w'
-      ) as f:
-        f.write('deployment,habitat\nsite_a,forest\nsite_b,wetland\n')
-      with open(
-          os.path.join(tempdir, 'hoplite_recordings_metadata.csv'), 'w'
-      ) as f:
-        f.write(
-            'recording,deployment_name\n'
-            'audio/rec1_audio.wav,site_a\n'
-            'audio/rec2_audio.wav,site_b\n'
-        )
-      with open(os.path.join(tempdir, 'hoplite_annotations.csv'), 'w') as f:
-        f.write(
-            'recording,label,start_offset_s,end_offset_s,label_type\n'
-            'audio/rec1_audio.wav,sp1,0.0,1.0,POSITIVE\n'
-        )
+    with open(os.path.join(tempdir, 'hoplite_annotations.csv'), 'w') as f:
+      f.write(
+          'recording,label,start_offset_s,end_offset_s,label_type\n'
+          'audio/rec1_audio.wav,sp1,0.0,1.0,POSITIVE\n'
+      )
 
-      audio_sources = source_info.AudioSources(
-          audio_globs=(
-              source_info.AudioSourceConfig(
-                  dataset_name='test',
-                  base_path=tempdir,
-                  file_glob='audio/*.wav',
-                  min_audio_len_s=0.0,
-                  target_sample_rate_hz=16000,
-              ),
-          )
-      )
-      worker = embed.EmbedWorker(audio_sources, self.model_config, db)
-      worker.process_all()
+    audio_sources = source_info.AudioSources(
+        audio_globs=(
+            source_info.AudioSourceConfig(
+                dataset_name='test',
+                base_path=tempdir,
+                file_glob='audio/*.wav',
+                min_audio_len_s=0.0,
+                target_sample_rate_hz=16000,
+            ),
+        )
+    )
+    worker = embed.EmbedWorker(audio_sources, self.model_config, db)
+    worker.process_all()
 
-      deployments = {d.name: d for d in db.get_all_deployments()}
-      self.assertSameElements(deployments.keys(), ['site_a', 'site_b'])
-      self.assertEqual(deployments['site_a'].habitat, 'forest')
-      self.assertEqual(deployments['site_b'].habitat, 'wetland')
-      recordings = {r.filename: r for r in db.get_all_recordings()}
-      self.assertEqual(
-          recordings['audio/rec1_audio.wav'].deployment_id,
-          deployments['site_a'].id,
-      )
-      self.assertEqual(
-          recordings['audio/rec2_audio.wav'].deployment_id,
-          deployments['site_b'].id,
-      )
-      self.assertLen(db.get_all_annotations(), 1)
-    finally:
-      shutil.rmtree(tempdir)
+    deployments = {d.name: d for d in db.get_all_deployments()}
+    self.assertSameElements(deployments.keys(), ['site_a', 'site_b'])
+    self.assertEqual(deployments['site_a'].habitat, 'forest')
+    self.assertEqual(deployments['site_b'].habitat, 'wetland')
+    recordings = {r.filename: r for r in db.get_all_recordings()}
+    self.assertEqual(
+        recordings['audio/rec1_audio.wav'].deployment_id,
+        deployments['site_a'].id,
+    )
+    self.assertEqual(
+        recordings['audio/rec2_audio.wav'].deployment_id,
+        deployments['site_b'].id,
+    )
+    self.assertLen(db.get_all_annotations(), 1)
 
 
 class DetectionsAndOptionalEmbeddingsTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
-    self.tempdir = tempfile.mkdtemp()
+    self.tempdir = self.create_tempdir().full_path
     self.db_path = os.path.join(self.tempdir, 'test_db')
     test_utils.make_wav_files(self.tempdir, ['pos'], ['foo'], file_len_s=5.0)
     self.audio_sources = source_info.AudioSources(
@@ -467,10 +449,6 @@ class DetectionsAndOptionalEmbeddingsTest(parameterized.TestCase):
         embedding_dim=32,
         model_config=placeholder_cfg,
     )
-
-  def tearDown(self):
-    super().tearDown()
-    shutil.rmtree(self.tempdir)
 
   def _make_db(self, db_key: str, suffix: str = ''):
     if db_key == 'in_mem':

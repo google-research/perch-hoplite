@@ -16,7 +16,6 @@
 """Tests for linear classifier implementation."""
 
 import os
-import tempfile
 
 from ml_collections import config_dict
 import numpy as np
@@ -32,9 +31,7 @@ class ClassifierTest(absltest.TestCase):
 
   def setUp(self):
     super().setUp()
-    # `self.create_tempdir()` raises an UnparsedFlagAccessError, which is why
-    # we use `tempdir` directly.
-    self.tempdir = tempfile.mkdtemp()
+    self.tempdir = self.create_tempdir().full_path
 
   def _make_linear_classifier(self, embedding_dim, classes):
     np.random.seed(1234)

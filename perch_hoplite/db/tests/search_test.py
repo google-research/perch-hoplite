@@ -15,9 +15,6 @@
 
 """Tests for Hoplite search."""
 
-import shutil
-import tempfile
-
 import numpy as np
 from perch_hoplite.db import score_functions
 from perch_hoplite.db.tests import test_utils
@@ -32,11 +29,7 @@ class SearchTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
-    self.tempdir = tempfile.mkdtemp()
-
-  def tearDown(self):
-    super().tearDown()
-    shutil.rmtree(self.tempdir)
+    self.tempdir = self.create_tempdir().full_path
 
   @parameterized.parameters(*test_utils.DB_TYPES)
   def test_exact_search(self, db_type):

@@ -16,8 +16,6 @@
 """Tests for Hoplite databases."""
 
 import datetime
-import shutil
-import tempfile
 
 from ml_collections import config_dict
 import numpy as np
@@ -37,11 +35,7 @@ class HopliteTest(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
-    self.tempdir = tempfile.mkdtemp()
-
-  def tearDown(self):
-    super().tearDown()
-    shutil.rmtree(self.tempdir)
+    self.tempdir = self.create_tempdir().full_path
 
   @parameterized.product(
       db_type=test_utils.DB_TYPES,

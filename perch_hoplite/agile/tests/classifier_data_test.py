@@ -15,9 +15,6 @@
 
 """Tests for classifier data management."""
 
-import shutil
-import tempfile
-
 from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.agile import classifier_data
@@ -32,13 +29,7 @@ class ClassifierDataTest(absltest.TestCase):
 
   def setUp(self):
     super().setUp()
-    # `self.create_tempdir()` raises an UnparsedFlagAccessError, which is why
-    # we use `tempdir` directly.
-    self.tempdir = tempfile.mkdtemp()
-
-  def tearDown(self):
-    super().tearDown()
-    shutil.rmtree(self.tempdir)
+    self.tempdir = self.create_tempdir().full_path
 
   def make_db_with_labels(
       self,

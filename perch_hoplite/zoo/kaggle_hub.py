@@ -20,6 +20,8 @@ returns loaded TensorFlow SavedModels, so TensorFlow is a hard, top-level
 dependency here. Models that use a different runtime import their own.
 """
 
+import os
+
 import kagglehub
 
 # Older model configs may contain a full model URL, as we used with TFHub.
@@ -74,7 +76,7 @@ def load(model_slug: str, model_version: int | None = None):
   """Download and load a model from KaggleHub."""
   import tensorflow as tf  # pylint: disable=g-import-not-at-top
 
-  if model_slug.startswith('/tmp'):
+  if model_slug.startswith('/tmp') or os.path.isdir(model_slug):
     # Assume this is a path to a downloaded model, rather than a kaggle model.
     return tf.saved_model.load(model_slug)
 
@@ -90,7 +92,7 @@ def resolve(
     path: str | None = None,
 ) -> str:
   """Download a model from KaggleHub and return the cached model's path."""
-  if model_slug.startswith('/tmp'):
+  if model_slug.startswith('/tmp') or os.path.isdir(model_slug):
     # Assume this is a path to a downloaded model, rather than a kaggle model.
     return model_slug
   model_path = normalize_slug(model_slug, model_version)

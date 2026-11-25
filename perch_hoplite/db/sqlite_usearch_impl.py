@@ -20,9 +20,7 @@ from collections.abc import Sequence
 import dataclasses
 import datetime as dt
 import functools
-import itertools
 import json
-import re
 import sqlite3
 from typing import Any, Literal
 
@@ -35,14 +33,25 @@ from perch_hoplite.db import datatypes
 from perch_hoplite.db import interface
 from perch_hoplite.db import score_functions
 from perch_hoplite.db import search_results
+from perch_hoplite.db import sql_utils
+from perch_hoplite.db import usearch_store
 from usearch import index as uindex
 
 HOPLITE_FILENAME = 'hoplite.sqlite'
-UINDEX_FILENAME = 'usearch.index'
-USEARCH_CONFIG_KEY = 'usearch_config'
-USEARCH_DTYPES = {
-    'float16': uindex.ScalarKind.F16,
-}
+UINDEX_FILENAME = usearch_store.UINDEX_FILENAME
+USEARCH_CONFIG_KEY = usearch_store.USEARCH_CONFIG_KEY
+DB_OPTIONS_KEY = usearch_store.DB_OPTIONS_KEY
+USEARCH_DTYPES = usearch_store.USEARCH_DTYPES
+
+# Re-export shared SQL and USearch helpers for backwards compatibility.
+get_default_usearch_config = usearch_store.get_default_usearch_config
+is_valid_sql_identifier = sql_utils.is_valid_sql_identifier
+normalize_sql_value = sql_utils.normalize_sql_value
+format_sql_insert_values = sql_utils.format_sql_insert_values
+format_sql_update_on_conflict = sql_utils.format_sql_update_on_conflict
+format_sql_where_conditions = sql_utils.format_sql_where_conditions
+_get_window_query_components = sql_utils.get_window_query_components
+
 SQL_TYPE_TO_PYTHON_TYPE = {
     'INTEGER': int,
     'REAL': float,
@@ -111,288 +120,22 @@ sqlite3.register_converter('FLOAT_LIST', convert_float_list)
 sqlite3.register_converter('TIMESTAMP', convert_timestamp)
 
 
-def get_default_usearch_config(
-    embedding_dim: int,
-) -> config_dict.ConfigDict:
-  """Get a default USearch config for the given embedding dimension."""
-  usearch_cfg = config_dict.ConfigDict()
-  usearch_cfg.embedding_dim = embedding_dim
-  usearch_cfg.dtype = 'float16'
-  usearch_cfg.metric_name = 'IP'
-  usearch_cfg.expansion_add = 256
-  usearch_cfg.expansion_search = 128
-  return usearch_cfg
-
-
-def is_valid_sql_identifier(name: str) -> bool:
-  """Check if a string is a valid and safe SQL identifier."""
-
-  if not name or not isinstance(name, str):
-    return False
-
-  # Regex to verify that the name starts with a letter or underscore, then
-  # follows with letters, numbers or underscores.
-  return re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', name) is not None
-
-
-def normalize_sql_value(value: Any) -> Any:
-  """Normalize a python value to one of the types supported by SQL."""
-
-  if (
-      isinstance(value, list)
-      or isinstance(value, tuple)
-      or isinstance(value, np.ndarray)
-  ):
-    return [normalize_sql_value(v) for v in value]
-  if isinstance(value, datatypes.LabelType):
-    return value.value
-  elif isinstance(value, dt.datetime):
-    return value.isoformat()
-  elif isinstance(value, np.integer):
-    return int(value)
-  elif isinstance(value, np.floating):
-    return float(value)
-  return value
-
-
-def format_sql_insert_values(
-    **kwargs: Any,
-) -> tuple[str, str, list[Any]]:
-  """Build columns string, placeholders string and values list for SQL INSERT.
-
-  Args:
-    **kwargs: Key-value pairs to pass to the SQL statement.
-
-  Returns:
-    A tuple of: a formatted columns string, a formatted placeholders string, and
-    a list of corresponding values. Safe to be used in SQL INSERT statements.
-  """
-
-  for key in kwargs:
-    if not is_valid_sql_identifier(key):
-      raise ValueError(f'`{key}` is not a valid SQL identifier.')
-
-  columns = list(kwargs.keys())
-  placeholders = ['?'] * len(columns)
-  values = normalize_sql_value(list(kwargs.values()))
-
-  return f"({', '.join(columns)})", f"({', '.join(placeholders)})", values
-
-
-def format_sql_update_on_conflict(*args: str) -> str:
-  """Build the update part of ON CONFLICT clauses for INSERT statements."""
-
-  for key in args:
-    if not is_valid_sql_identifier(key):
-      raise ValueError(f'`{key}` is not a valid SQL identifier.')
-
-  if not args:
-    return 'DO NOTHING'
-  else:
-    update_clauses_str = ', '.join([f'{key} = excluded.{key}' for key in args])
-    return f'DO UPDATE SET {update_clauses_str}'
-
-
-def format_sql_where_conditions(
-    filter_dict: config_dict.ConfigDict | None = None,
-    table_prefix: str | None = None,
-) -> tuple[str, list[Any]]:
-  r"""Build conditions string and values list for SQL WHERE from given filters.
-
-  Args:
-    filter_dict: A ConfigDict of constraints to build SQL conditions from.
-    table_prefix: An optional table prefix to prepend to each column name.
-
-  Returns:
-    A tuple of: a formatted string of AND-joined conditions, and a list of
-    corresponding values. Safe to be used in SQL WHERE statements.
-  """
-
-  if table_prefix and not is_valid_sql_identifier(table_prefix):
-    raise ValueError(
-        f'Table prefix `{table_prefix}` is not a valid SQL identifier.'
-    )
-
-  if not filter_dict:
-    return '', []
-
-  supported_ops = {
-      'eq',
-      'neq',
-      'lt',
-      'lte',
-      'gt',
-      'gte',
-      'isin',
-      'notin',
-      'range',
-      'approx',
-  }
-
-  conditions = []
-  values = []
-
-  # Build the SQL conditions for each operation.
-  for op_name, op_filters in filter_dict.items():
-
-    if op_name not in supported_ops:
-      raise ValueError(
-          f'Unsupported operation: `{op_name}`. Supported filtering operations'
-          f' are: {supported_ops}.'
-      )
-    if not isinstance(op_filters, config_dict.ConfigDict):
-      raise ValueError(f'`{op_name}` value must be a ConfigDict.')
-
-    for key, value in op_filters.items():
-      if table_prefix:
-        column = f'{table_prefix}.{key}'
-      else:
-        column = key
-
-      # Check that the key is a valid SQL identifier.
-      if not is_valid_sql_identifier(key):
-        raise ValueError(
-            f'Table column `{column}` is not a valid SQL identifier. Fix the'
-            f' filter rule under the `{op_name}` operation.'
-        )
-
-      # Normalize the value.
-      value = normalize_sql_value(value)
-
-      # Build the current SQL condition.
-      if op_name == 'eq':
-        if key == 'offsets':
-          logging.warning(
-              "Do not apply `eq` to the `offsets` unless you know what you're "
-              'doing. Apply `approx` instead to avoid floating point errors.'
-          )
-        if value is None:
-          conditions.append(f'{column} IS NULL')
-        else:
-          conditions.append(f'{column} = ?')
-          values.append(value)
-      elif op_name == 'neq':
-        if value is None:
-          conditions.append(f'{column} IS NOT NULL')
-        else:
-          conditions.append(f'{column} != ?')
-          values.append(value)
-      elif op_name == 'lt':
-        conditions.append(f'{column} < ?')
-        values.append(value)
-      elif op_name == 'lte':
-        conditions.append(f'{column} <= ?')
-        values.append(value)
-      elif op_name == 'gt':
-        conditions.append(f'{column} > ?')
-        values.append(value)
-      elif op_name == 'gte':
-        conditions.append(f'{column} >= ?')
-        values.append(value)
-      elif op_name == 'isin':
-        if not isinstance(value, list):
-          raise ValueError(f'`{op_name}` value must be a list.')
-        placeholders = ['?'] * len(value)
-        placeholders_str = ', '.join(placeholders)
-        conditions.append(f'{column} IN ({placeholders_str})')
-        values.extend(value)
-      elif op_name == 'notin':
-        if not isinstance(value, list):
-          raise ValueError(f'`{op_name}` value must be a list.')
-        placeholders = ['?'] * len(value)
-        placeholders_str = ', '.join(placeholders)
-        conditions.append(f'{column} NOT IN ({placeholders_str})')
-        values.extend(value)
-      elif op_name == 'range':
-        if not isinstance(value, list) or len(value) != 2:
-          raise ValueError(f'`{op_name}` value must be a list of 2 elements.')
-        conditions.append(f'{column} BETWEEN ? AND ?')
-        values.extend(value)
-      elif op_name == 'approx':
-        if key == 'offsets':
-          conditions.append(f'APPROX_FLOAT_LIST({column}, ?) = TRUE')
-        else:
-          conditions.append(f'ABS({column} - ?) < 1e-6')
-        values.append(value)
-
-  return ' AND '.join(conditions), values
-
-
-def _get_window_query_components(
-    deployments_filter: config_dict.ConfigDict | None = None,
-    recordings_filter: config_dict.ConfigDict | None = None,
-    windows_filter: config_dict.ConfigDict | None = None,
-    annotations_filter: config_dict.ConfigDict | None = None,
-) -> tuple[str, str, list[Any]]:
-  """Construct FROM, WHERE, and VALUES for window SQL queries."""
-  # Pick which tables need to be queried.
-  query_tables = {'windows'}
-  if annotations_filter:
-    query_tables |= {'annotations'}
-  if recordings_filter:
-    query_tables |= {'recordings'}
-  if deployments_filter:
-    query_tables |= {'recordings', 'deployments'}
-
-  # Build the `FROM ... [JOIN ...]` part of the SQL query.
-  from_clause = 'FROM windows'
-  if 'annotations' in query_tables:
-    from_clause += (
-        ' JOIN annotations ON windows.recording_id = annotations.recording_id'
-        ' AND GET_OFFSET_START(annotations.offsets) <'
-        ' GET_OFFSET_END(windows.offsets)'
-        ' AND GET_OFFSET_END(annotations.offsets) >'
-        ' GET_OFFSET_START(windows.offsets)'
-    )
-  if 'recordings' in query_tables:
-    from_clause += ' JOIN recordings ON windows.recording_id = recordings.id'
-  if 'deployments' in query_tables:
-    from_clause += (
-        ' JOIN deployments ON recordings.deployment_id = deployments.id'
-    )
-
-  # Build the `WHERE ...` part of the SQL query.
-  conditions, values = tuple(
-      zip(*[
-          format_sql_where_conditions(
-              deployments_filter, table_prefix='deployments'
-          ),
-          format_sql_where_conditions(
-              recordings_filter, table_prefix='recordings'
-          ),
-          format_sql_where_conditions(windows_filter, table_prefix='windows'),
-          format_sql_where_conditions(
-              annotations_filter, table_prefix='annotations'
-          ),
-      ])
-  )
-  conditions_str = ' AND '.join(c for c in conditions if c)
-  values = list(itertools.chain.from_iterable(values))
-  where_clause = f'WHERE {conditions_str}' if conditions_str else ''
-  return from_clause, where_clause, values
-
-
 @dataclasses.dataclass
 class SQLiteUSearchDB(interface.HopliteDBInterface):
-  """SQLite hoplite database, using USearch for vector storage.
+  """SQLite hoplite database, using optional USearch for vector storage.
 
   USearch provides both indexing for approximate nearest neighbor search and
   fast disk-based random access to vectors for the complete database. USearch
-  will default to working with disk-based vectors, unless we insert or remove
-  embeddings, in which case we load the index into memory and use it from there
-  for all subsequent operations. On database commit, the in-memory index is
-  persisted to disk.
+  is initialized lazily so databases created without embeddings (or before any
+  embeddings are inserted) do not write an empty index file to disk. On
+  database commit, any in-memory index modifications are persisted to disk.
 
   Attributes:
     db_path: The path to the database directory.
     db: The sqlite3 database connection.
-    ui: The USearch index.
-    _embedding_dim: The dimension of the embeddings.
-    _embedding_dtype: The data type of the embeddings.
+    _vector_store: Optional USearch vector store wrapper.
     _cursor: The sqlite3 cursor.
-    _ui_loaded: Whether the USearch index was loaded in memory.
-    _ui_updated: Whether the USearch index was updated since the last load and
-      needs to be persisted to disk at some point in the future.
+    _readonly: Whether the database was opened in read-only mode.
   """
 
   # User-provided.
@@ -400,17 +143,16 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
   # Instantiated during creation.
   db: sqlite3.Connection
-  ui: uindex.Index
-
-  # Obtained from `usearch_cfg`.
-  _embedding_dim: int
-  _embedding_dtype: type[Any] = np.float16
+  _vector_store: usearch_store.USearchVectorStore
 
   # Dynamic state.
   _cursor: sqlite3.Cursor | None = None
-  _ui_loaded: bool = False
-  _ui_updated: bool = False
   _readonly: bool = False
+
+  @property
+  def ui(self) -> uindex.Index:
+    """The underlying USearch index (backwards-compatible property)."""
+    return self._vector_store.ui
 
   @property
   def sqlite_path(self) -> epath.Path:
@@ -538,30 +280,47 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       db_path: str,
       usearch_cfg: config_dict.ConfigDict | None = None,
       readonly: bool = False,
+      use_embeddings: bool = True,
   ) -> 'SQLiteUSearchDB':
     """Connect to and, if needed, initialize the database.
 
     Args:
       db_path: The path to the database directory.
       usearch_cfg: The configuration for the USearch index. If None, the config
-        is loaded from the DB.
+        is loaded from the DB (or embeddings are disabled if `use_embeddings` is
+        False or the existing DB was created without embeddings).
       readonly: If True, opens the database in read-only mode.
+      use_embeddings: Whether to enable USearch embedding storage. Pass `False`
+        (with `usearch_cfg=None`) to create a database without a USearch index.
+        When opening an existing database created with `use_embeddings=False`,
+        this does not need to be repeated.
 
     Raises:
-      ValueError: If `usearch_cfg` is inconsistent with the DB or if no config
-        is found in the DB and none was provided.
-      FileNotFoundError: If `readonly` is True and the USearch index file does
-        not exist.
+      ValueError: If `usearch_cfg` or `use_embeddings` is inconsistent with the
+        DB, or if no config is found in the DB and none was provided.
 
     Returns:
       A new instance of the database.
     """
+    resolved_db_path = epath.Path(db_path)
+    sqlite_path = resolved_db_path / HOPLITE_FILENAME
 
-    # Create the SQLite DB.
-    db_path = epath.Path(db_path)  # pyrefly: ignore[bad-assignment]
+    # Guard against accidentally creating an empty DB directory on a typo path
+    # when the caller intended to open an existing embeddings DB.
+    if (
+        not readonly
+        and not sqlite_path.exists()
+        and use_embeddings
+        and usearch_cfg is None
+    ):
+      raise ValueError(
+          'No usearch_cfg was found in DB and none was provided. Pass'
+          ' `usearch_cfg` to create an embeddings DB, or `use_embeddings=False`'
+          ' to create a database without embeddings.'
+      )
+
     if not readonly:
-      db_path.mkdir(parents=True, exist_ok=True)  # pyrefly: ignore[missing-attribute]
-    sqlite_path = db_path / HOPLITE_FILENAME  # pyrefly: ignore[unsupported-operation]
+      resolved_db_path.mkdir(parents=True, exist_ok=True)
 
     if readonly:
       db = sqlite3.connect(
@@ -605,64 +364,47 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
       cls._setup_tables(cursor)
       db.commit()
 
-    # Retrieve the metadata.
-    # TODO(tomdenton): Check that `usearch_cfg` is consistent with the DB.
     metadata = cls._get_all_metadata(cursor)
     cursor.close()
-    if (
-        USEARCH_CONFIG_KEY in metadata
-        and usearch_cfg is not None
-        and metadata[USEARCH_CONFIG_KEY] != usearch_cfg
-    ):
-      raise ValueError(
-          'A usearch_cfg was provided, but a different one already exists in'
-          ' the DB.'
+    try:
+      resolved_cfg, should_write_usearch_cfg, should_write_no_emb = (
+          usearch_store.resolve_usearch_config(
+              metadata=metadata,
+              usearch_cfg=usearch_cfg,
+              use_embeddings=use_embeddings,
+              readonly=readonly,
+          )
       )
-    if USEARCH_CONFIG_KEY in metadata:
-      usearch_cfg = metadata[USEARCH_CONFIG_KEY]
-    elif usearch_cfg is None:
-      raise ValueError('No usearch_cfg was found in DB and none was provided.')
+      vector_store = usearch_store.USearchVectorStore(
+          index_path=resolved_db_path / UINDEX_FILENAME,
+          usearch_cfg=resolved_cfg,
+          readonly=readonly,
+      )
+    except Exception:
+      db.close()
+      raise
 
-    # Create the USearch index.
-    usearch_dtype = USEARCH_DTYPES[usearch_cfg.dtype]  # pyrefly: ignore[missing-attribute]
-    index_path = db_path / UINDEX_FILENAME  # pyrefly: ignore[unsupported-operation]
-    if index_path.exists():
-      ui = uindex.Index(
-          ndim=usearch_cfg.embedding_dim,  # pyrefly: ignore[missing-attribute]
-          path=index_path,
-          view=True,
-      )
-      ui_in_memory = False
-    else:
-      if readonly:
-        raise FileNotFoundError(f'USearch index not found at {index_path}')
-      ui = uindex.Index(
-          ndim=usearch_cfg.embedding_dim,  # pyrefly: ignore[missing-attribute]
-          metric=getattr(uindex.MetricKind, usearch_cfg.metric_name),  # pyrefly: ignore[missing-attribute]
-          expansion_add=usearch_cfg.expansion_add,  # pyrefly: ignore[missing-attribute]
-          expansion_search=usearch_cfg.expansion_search,  # pyrefly: ignore[missing-attribute]
-          dtype=usearch_dtype,
-          path=index_path,
-          view=False,
-      )
-      ui_in_memory = True
-
-    # Create the Hoplite DB.
     hoplite_db = cls(
-        db_path=db_path,  # pyrefly: ignore[bad-argument-type]
+        db_path=resolved_db_path,
         db=db,
-        ui=ui,
-        _embedding_dim=usearch_cfg.embedding_dim,  # pyrefly: ignore[missing-attribute]
-        _embedding_dtype=usearch_cfg.dtype,  # pyrefly: ignore[missing-attribute]
-        _ui_loaded=ui_in_memory,
-        _ui_updated=ui_in_memory,
+        _vector_store=vector_store,
         _readonly=readonly,
     )
 
-    metadata_already_present = USEARCH_CONFIG_KEY in metadata
-    if not readonly and not metadata_already_present:
-      hoplite_db.insert_metadata(USEARCH_CONFIG_KEY, usearch_cfg)  # pyrefly: ignore[bad-argument-type]
-      hoplite_db.commit()
+    if not readonly:
+      if should_write_usearch_cfg and resolved_cfg is not None:
+        hoplite_db.insert_metadata(USEARCH_CONFIG_KEY, resolved_cfg)
+        if DB_OPTIONS_KEY in metadata:
+          opts = config_dict.ConfigDict(metadata[DB_OPTIONS_KEY])
+          opts.use_embeddings = True
+          hoplite_db.insert_metadata(DB_OPTIONS_KEY, opts)
+        hoplite_db.commit()
+      elif should_write_no_emb:
+        hoplite_db.insert_metadata(
+            DB_OPTIONS_KEY,
+            config_dict.ConfigDict({'use_embeddings': False}),
+        )
+        hoplite_db.commit()
 
     return hoplite_db
 
@@ -752,9 +494,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     if self._cursor is not None:
       self._cursor.close()
       self._cursor = None
-    if self._ui_updated:
-      self.ui.save()
-      self._ui_updated = False
+    self._vector_store.save()
 
   def rollback(self) -> None:
     """Rollback any pending transactions to the database."""
@@ -772,7 +512,11 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
   def thread_split(self) -> 'SQLiteUSearchDB':
     """Get a new instance of the SQLite DB."""
-    return self.create(self.db_path.as_posix(), readonly=self._readonly)
+    return self.create(
+        self.db_path.as_posix(),
+        readonly=self._readonly,
+        use_embeddings=self._vector_store.enabled,
+    )
 
   def _get_cursor(self) -> sqlite3.Cursor:
     """Get the SQLite cursor."""
@@ -914,11 +658,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
         deployments_filter=config_dict.create(eq=dict(id=deployment_id))
     )
     if remove_window_ids:
-      if not self._ui_loaded:
-        self.ui.load()
-        self._ui_loaded = True
-      self.ui.remove(remove_window_ids)
-      self._ui_updated = True
+      self._vector_store.remove(remove_window_ids)
 
     cursor = self._get_cursor()
     cursor.execute(
@@ -1011,11 +751,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
         recordings_filter=config_dict.create(eq=dict(id=recording_id))
     )
     if remove_window_ids:
-      if not self._ui_loaded:
-        self.ui.load()
-        self._ui_loaded = True
-      self.ui.remove(remove_window_ids)
-      self._ui_updated = True
+      self._vector_store.remove(remove_window_ids)
 
     cursor = self._get_cursor()
     cursor.execute(
@@ -1040,11 +776,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   ) -> int:
     """Insert a window into the database."""
 
-    if embedding is not None and embedding.shape[-1] != self._embedding_dim:
-      raise ValueError(
-          f'Incorrect embedding dimension. Expected {self._embedding_dim}, but'
-          f' got {embedding.shape[-1]}.'
-      )
+    if embedding is not None:
+      self._vector_store.validate_embedding(embedding)
 
     duplicate_id = self._handle_window_duplicates(
         recording_id, offsets, handle_duplicates
@@ -1079,11 +812,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     if window_id is None:
       raise RuntimeError('Error inserting the window into the database.')
     if embedding is not None:
-      if not self._ui_loaded:
-        self.ui.load()
-        self._ui_loaded = True
-      self.ui.add(window_id, embedding.astype(self._embedding_dtype))
-      self._ui_updated = True
+      self._vector_store.add(window_id, embedding)
     return window_id
 
   def insert_windows_batch(
@@ -1096,14 +825,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
   ) -> Sequence[int]:
     """Insert a batch of windows into the database."""
 
-    if (
-        embeddings_batch is not None
-        and embeddings_batch.shape[-1] != self._embedding_dim
-    ):
-      raise ValueError(
-          f'Incorrect embedding dimension. Expected {self._embedding_dim}, but'
-          f' got {embeddings_batch.shape[-1]}.'
-      )
+    if embeddings_batch is not None:
+      self._vector_store.validate_embedding(embeddings_batch)
 
     # Make sure that, unless we're in "allow" mode, there are no duplicates in
     # the batch itself.
@@ -1172,15 +895,11 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
           **windows_batch[idx],
       )
 
-    if embeddings_batch is not None:
-      if not self._ui_loaded:
-        self.ui.load()
-        self._ui_loaded = True
-      self.ui.add(
+    if embeddings_batch is not None and keep_idx:
+      self._vector_store.add(
           np.array(window_ids)[keep_idx],
-          embeddings_batch[keep_idx].astype(self._embedding_dtype),
+          embeddings_batch[keep_idx],
       )
-      self._ui_updated = True
 
     return window_ids
 
@@ -1248,51 +967,14 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
   def get_embedding(self, window_id: int) -> np.ndarray:
     """Get an embedding vector from the database."""
-
-    window_id = int(window_id)
-
-    found = self.ui.contains(window_id)
-    if not isinstance(found, bool):
-      raise RuntimeError(
-          'Expected bool result from the USearch `contains()` method, but got'
-          f' {type(found)}: {found}.'
-      )
-    if not found:
-      raise KeyError(f'Embedding vector not found for window id: {window_id}')
-    embedding = self.ui.get(window_id)
-    if not isinstance(embedding, np.ndarray):
-      raise RuntimeError(
-          'Expected np.ndarray result from the USearch `get()` method, but got'
-          f' {type(embedding)}: {embedding}.'
-      )
-    return embedding
+    return self._vector_store.get(int(window_id))
 
   def get_embeddings_batch(
       self,
       window_ids: Sequence[int],
   ) -> np.ndarray:
     """Get a batch of embedding vectors from the database."""
-
-    found = self.ui.contains(window_ids)
-    if not isinstance(found, np.ndarray):
-      raise RuntimeError(
-          'Expected np.ndarray result from the USearch `contains()` method, but'
-          f' got {type(found)}: {found}.'
-      )
-    if not np.all(found):
-      raise KeyError(
-          'Embedding vectors not found for window ids:'
-          f' {itertools.compress(window_ids, ~found)}'
-      )
-    embeddings_batch = self.ui.get(window_ids)
-    if isinstance(embeddings_batch, (tuple, list)):
-      embeddings_batch = np.stack(embeddings_batch)  # pyrefly: ignore[no-matching-overload]
-    if not isinstance(embeddings_batch, np.ndarray):
-      raise RuntimeError(
-          'Expected np.ndarray result from the USearch `get()` method, but got'
-          f' {type(embeddings_batch)}: {embeddings_batch}.'
-      )
-    return embeddings_batch
+    return self._vector_store.get_batch(window_ids)
 
   def remove_window(self, window_id: int) -> None:
     """Remove a window from the database."""
@@ -1310,11 +992,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     if cursor.rowcount == 0:
       raise KeyError(f'Window id not found: {window_id}')
 
-    if not self._ui_loaded:
-      self.ui.load()
-      self._ui_loaded = True
-    self.ui.remove(window_id)
-    self._ui_updated = True
+    self._vector_store.remove(window_id)
 
   def insert_annotation(
       self,
@@ -1408,7 +1086,7 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
   def count_embeddings(self) -> int:
     """Get the number of embeddings in the database."""
-    return self.ui.size
+    return self._vector_store.count()
 
   def match_window_ids(
       self,
@@ -1642,11 +1320,11 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
 
   def get_embedding_dim(self) -> int:
     """Get the embedding dimension."""
-    return self._embedding_dim
+    return self._vector_store.embedding_dim
 
   def get_embedding_dtype(self) -> type[Any]:
     """Get the embedding data type."""
-    return self._embedding_dtype
+    return self._vector_store.embedding_dtype
 
   def search(
       self,
@@ -1672,6 +1350,8 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
     Returns:
       A TopKSearchResults object containing the search results.
     """
+    if not self._vector_store.enabled:
+      raise ValueError('Embeddings are not enabled for this database.')
     if not approximate and target_score is not None:
       return super().search(
           query_embedding=query_embedding,
@@ -1687,10 +1367,13 @@ class SQLiteUSearchDB(interface.HopliteDBInterface):
           'Approximate search does not support target_score sampling.'
       )
 
-    ann_matches = self.ui.search(
+    results = search_results.TopKSearchResults(top_k=search_list_size)
+    if self.count_embeddings() == 0:
+      return results
+
+    ann_matches = self._vector_store.search(
         query_embedding, count=search_list_size, exact=not approximate
     )
-    results = search_results.TopKSearchResults(top_k=search_list_size)
     for k, d in zip(ann_matches.keys, ann_matches.distances):
       # Usearch with IP returns 1 - inner_product.
       # We want higher is better, so 1 - d.

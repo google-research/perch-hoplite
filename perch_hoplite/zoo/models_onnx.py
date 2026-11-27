@@ -161,8 +161,12 @@ class PerchV2OnnxModel(TaxonomyModelOnnx):
 
   @classmethod
   def resolve_config(cls, config: config_dict.ConfigDict) -> dict[str, Any]:
-    # Download weights from HF Hub
-    model_path = hf_hub.download('justinchuby/Perch-onnx', 'perch_v2.onnx')
+    # Pin the published ONNX artifact for reproducible downloads.
+    model_path = hf_hub.download(
+        'justinchuby/Perch-onnx',
+        'perch_v2.onnx',
+        revision='b836205ba74e78e2a42ef74c57f72292768545d3',
+    )
 
     # Download labels from Kaggle Hub
     try:

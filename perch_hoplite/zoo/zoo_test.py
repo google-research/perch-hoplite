@@ -18,12 +18,15 @@
 import importlib
 import importlib.util
 import json
+import os
+import tempfile
 from unittest import mock
 
 from ml_collections import config_dict
 import numpy as np
 from perch_hoplite.zoo import hf_hub
 from perch_hoplite.zoo import model_configs
+from perch_hoplite.zoo import models_onnx
 from perch_hoplite.zoo import zoo_interface
 
 from absl.testing import absltest
@@ -233,6 +236,51 @@ class ZooTest(parameterized.TestCase):
     mock_download.assert_called_once_with(
         repo_id='org/repo', filename='config.json'
     )
+
+  @parameterized.product(use_local_dir=[False, True], revision=[None, 'v2'])
+  def test_hf_hub_download(self, use_local_dir, revision):
+    local_dir = None
+    expected_kwargs = {}
+    if use_local_dir:
+      temp_dir = tempfile.TemporaryDirectory()
+      self.addCleanup(temp_dir.cleanup)
+      local_dir = os.path.join(temp_dir.name, 'download')
+      expected_kwargs['local_dir'] = local_dir
+    if revision is not None:
+      expected_kwargs['revision'] = revision
+    with mock.patch('huggingface_hub.hf_hub_download') as mock_download:
+      mock_download.return_value = '/cached/model.onnx'
+      self.assertEqual(
+          hf_hub.download('org/repo', 'model.onnx', local_dir, revision=revision),
+          '/cached/model.onnx',
+      )
+    mock_download.assert_called_once_with(
+        repo_id='org/repo', filename='model.onnx', **expected_kwargs
+    )
+    if use_local_dir:
+      self.assertTrue(os.path.isdir(local_dir))
+
+  def test_perch_v2_onnx_resolve_config_pins_revision(self):
+    with (
+        mock.patch('huggingface_hub.hf_hub_download') as mock_download,
+        mock.patch.object(models_onnx.kagglehub, 'model_download') as mock_labels,
+    ):
+      mock_download.return_value = '/cached/perch_v2.onnx'
+      mock_labels.side_effect = FileNotFoundError
+      resolved = models_onnx.PerchV2OnnxModel.resolve_config(
+          config_dict.ConfigDict()
+      )
+
+    mock_download.assert_called_once_with(
+        repo_id='justinchuby/Perch-onnx',
+        filename='perch_v2.onnx',
+        revision='b836205ba74e78e2a42ef74c57f72292768545d3',
+    )
+    mock_labels.assert_called_once_with(
+        'google/bird-vocalization-classifier/tensorFlow2/perch_v2/2',
+        path='assets/labels.csv',
+    )
+    self.assertEqual(resolved['model_path'], '/cached/perch_v2.onnx')
 
   def test_birdcode_preset_config(self):
     preset_info = model_configs.get_preset_model_config(

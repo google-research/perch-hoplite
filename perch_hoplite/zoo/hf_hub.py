@@ -67,7 +67,13 @@ def _get_or_create_stage_dir(cache_key: str, dir_name: str) -> str:
   return cached
 
 
-def download(repo_id: str, filename: str, local_dir: str | None = None) -> str:
+def download(
+    repo_id: str,
+    filename: str,
+    local_dir: str | None = None,
+    *,
+    revision: str | None = None,
+) -> str:
   """Download `filename` from `repo_id`; return the local path.
 
   With `local_dir`, the file is placed there (out of the shared HF cache);
@@ -77,16 +83,21 @@ def download(repo_id: str, filename: str, local_dir: str | None = None) -> str:
     repo_id: The Hugging Face repo ID.
     filename: The filename to download.
     local_dir: Optional directory to place the file in.
+    revision: Optional Hub commit, tag, or branch to download from.
 
   Returns:
     The local path to the downloaded file.
   """
+  # Omit optional arguments when unset to preserve the default Hub behavior.
+  download_kwargs = {}
   if local_dir:
     os.makedirs(local_dir, exist_ok=True)
-    return huggingface_hub.hf_hub_download(
-        repo_id=repo_id, filename=filename, local_dir=local_dir
-    )
-  return huggingface_hub.hf_hub_download(repo_id=repo_id, filename=filename)
+    download_kwargs['local_dir'] = local_dir
+  if revision is not None:
+    download_kwargs['revision'] = revision
+  return huggingface_hub.hf_hub_download(
+      repo_id=repo_id, filename=filename, **download_kwargs
+  )
 
 
 def stage_local_dir(model_path: str) -> str:
